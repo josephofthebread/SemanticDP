@@ -9,6 +9,7 @@
   "editor.formatOnSave": true,
   "notebook.formatOnSave.enabled": true,
   "cSpell.words": [
+    "Dudich",
     "latexmk",
     "xelatex"
   ],

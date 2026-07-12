@@ -191,21 +191,22 @@
 }{%
   \uncover<1->{%
     We test whether alignment degradation is driven by semantic distortion or by the direct, non-semantic effects of DP noise.
-    \par\vspace{0.15cm}}
+    \par\vspace{0.08cm}}
 
   \uncover<2->{%
     Statistically,
     the naive version is a correlation question:
     does degradation track distortion?
     We reformulate it as a regression with the privacy level controlled,
-    plus a randomized non-DP coefficient.
-    \par\vspace{0.3cm}}
+    plus a randomized non-DP control arm.
+    \par\vspace{0.08cm}}
 
   \uncover<3->{%
     \[
-      Y_{i} = a_{m_i} + b_{m_i}\, d_i + c\, \Sdist_i + e_i
+      Y_{i} = a_{m_i} + b_{m_i}\, d_i + c\, \Sdist_i + e_i,
     \]
-    \par\vspace{0.1cm}}
+    where $d_i$ is the run's privacy-level rank within its mechanism.
+    \par\vspace{0.05cm}}
 
   \uncover<4->{%
     \textbf{H1 (primary).}
@@ -237,7 +238,7 @@
   A regression on one way alone cannot separate $b_m$ from $c$.
   \vspace{0.4cm}
 
-  We need variation in $\Sdist$ \emph{at fixed} $\eps$.
+  We need variation in $\Sdist$ \emph{at fixed privacy level}.
   It comes from contrasting four ways of adding (or not adding) privacy noise against each other.
 }{%
   \begin{itemize}
@@ -411,8 +412,8 @@
       a second regression,
       $\Sdist$ on the privacy level (per mechanism),
       gives how much the privacy level moves $\Sdist$ in the first place -- multiplied by $c$,
-      that the effect,
-      separated from the direct effect $b_m$.
+      that is the indirect effect,
+      separate from the direct effect $b_m$.
       Confidence interval built by resampling seeds.
     \item Privacy--distortion--alignment curves:
       $Y$ against the privacy level,
