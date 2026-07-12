@@ -1,0 +1,37 @@
+name: Build PDFs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [proposal, pres]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Compile ${{ matrix.directory }}
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: ${{ matrix.directory }}
+          root_file: main.tex
+          latexmk_use_xelatex: false
+
+      - name: Rename the output to ${{ matrix.directory }}.pdf
+        run: mv ${{ matrix.directory }}/main.pdf ${{ matrix.directory }}/${{ matrix.directory }}.pdf
+
+      - name: Upload ${{ matrix.directory }}.pdf
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.directory }}
+          path: ${{ matrix.directory }}/${{ matrix.directory }}.pdf
+          if-no-files-found: error
+          retention-days: 30

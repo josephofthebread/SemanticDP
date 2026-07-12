@@ -8,4 +8,8 @@
   },
   "editor.formatOnSave": true,
   "notebook.formatOnSave.enabled": true,
+  "cSpell.words": [
+    "latexmk",
+    "xelatex"
+  ],
 }
