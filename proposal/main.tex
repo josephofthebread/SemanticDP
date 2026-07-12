@@ -71,12 +71,56 @@ The project's central research question: is DP-induced alignment degradation
 driven by semantic distortion of the training/inference signal, or by
 non-semantic side effects of DP noise? We formalize this as a simple linear model:
 \begin{equation}\label{eq:model}
- Y_{i} = a + b\, f(\eps_i;\, m_i) + c\, \Sdist_i + e_i,
+ Y_{i} = a_{m_i} + b_{m_i}\, d_i + c\, \Sdist_i + e_i,
 \end{equation}
-where $a$ collects the intercept, mechanism fixed effects, and a random
-intercept per base model, and $e_i$ is the error term. $Y$, $\Sdist$, and
-$f(\eps)$ are z-scored before fitting, so $b$ and $c$ are
-standardized effects on a common scale and can be compared directly.
+where $d_i$ is the \emph{privacy-level rank} of run $i$ within its own mechanism (the
+four $\eps$ levels of M2/M3 and the four $p$ levels of M1, coded $1$--$4$ and
+z-scored), $a_m$ and $b_m$ are a per-mechanism intercept and level slope, a
+random intercept per base model is added to $a_m$, and $e_i$ is the error
+term. $Y$, $d$, and $\Sdist$ are z-scored before fitting, so $b_m$ and $c$
+are standardized effects on a common scale and can be compared directly.
+Because $Y$ is defined as the drop relative to the same-model M0 baseline,
+the M0 runs have $Y \equiv 0$ by construction: they define the zero point and
+are not regression rows, so the regression uses the $216$ mechanism runs
+($108$ per corpus).
+
+\paragraph{Computing $d_i$.}
+Each mechanism has exactly four settings, ordered from strictest to loosest:
+M2 uses word-level $\eps \in \{1, 3, 6, 12\}$, M3 uses example-level
+$\eps \in \{1, 4, 8, 16\}$, and M1 uses perturbation rates
+$p \in \{0.50, 0.30, 0.15, 0.05\}$ (a higher rate is a stricter setting, so
+the order is reversed). Within its own mechanism, a run at the strictest
+setting gets $d_i = 1$, the next $d_i = 2$, up to $d_i = 4$ at the loosest;
+the four values are then z-scored (giving $-1.16, -0.39, 0.39, 1.16$). Only
+the \emph{order} of the settings is used, never their numeric values: this
+is deliberate, because the numeric $\eps$ values are not comparable across
+mechanisms (Remark~\ref{rem:eps}) and, within a mechanism, we claim only
+that stricter means noisier---not any particular functional form. Rank
+coding assumes exactly that and nothing more.
+
+\paragraph{One regression, not three.}
+Although $a_{m}$ and $b_{m}$ carry a mechanism index, model~\eqref{eq:model}
+is a single ordinary linear regression, estimated jointly on all $216$ rows
+via indicator (dummy) variables. Written out for mechanisms $m \in \{1,2,3\}$:
+\begin{equation}\label{eq:dummies}
+  Y_i \;=\; \sum_{m=1}^{3} a_m\,\pmb{1}[m_i{=}m]
+        \;+\; \sum_{m=1}^{3} b_m\, d_i\,\pmb{1}[m_i{=}m]
+        \;+\; c\, \Sdist_i \;+\; e_i,
+\end{equation}
+a linear model with seven coefficients and a $216 \times 7$ design matrix,
+fitted by least squares in one pass (in \texttt{statsmodels}:
+\texttt{Y \textasciitilde{} C(mechanism) + C(mechanism):d + S}, with the
+per-model random intercept added via \texttt{MixedLM}). Each row activates
+the intercept and slope of its own mechanism only, which is why the model
+behaves as if fitted per mechanism---but the $\Sdist$ column carries no
+indicator, so $c$ is shared by all rows, and every mechanism's runs
+contribute evidence about the same $c$. This is the design's point: the
+mechanisms disagree about how much distortion a given privacy level buys,
+but they pool into one estimate of what distortion costs. Joint estimation
+also makes Hypothesis~\ref{hyp:dom} directly testable: $\hat c$ and each
+$\hat b_m$ come from one fit with their joint covariance, so
+$|c| > |b_m|$ is a Wald test on linear combinations of coefficients, not a
+comparison across separate regressions.
 
 \begin{hypothesis}[Pre-registered, primary: minimum effect]\label{hyp:main}
 $|c| \ge \Delta$ in model~\eqref{eq:model}, with $\Delta = 0.10$
@@ -88,10 +132,10 @@ indirect path through $\Sdist$ carries a non-trivial share.
 
 \begin{hypothesis}[Secondary: dominance]\label{hyp:dom}
 $|c| > |b_{m}|$ for each mechanism $m$: semantic distortion
-predicts degradation more strongly than the nominal privacy dose does.
-(Because $\eps$ is ordinal and mechanism-specific, $b$ is estimated per
-mechanism; the comparison is a Wald test per mechanism, so this hypothesis may
-be underpowered and is therefore secondary.)
+predicts degradation more strongly than the nominal privacy level does.
+(The level slope $b_m$ is mechanism-specific by construction, so the
+comparison is a Wald test per mechanism; it may be underpowered and is
+therefore secondary.)
 \end{hypothesis}
 
 \begin{hypothesis}[Secondary: moderation by entity density]\label{hyp:mod}
@@ -118,7 +162,7 @@ $\Sdist$.
 \paragraph{Identification.}
 Within a single mechanism, $\Sdist$ and $\eps$ are strongly correlated by
 construction: more noise means more distortion. So a regression on one
-mechanism alone cannot separate $b$ from $c$. We need variation in
+mechanism alone cannot separate $b_m$ from $c$. We need variation in
 $\Sdist$ at fixed $\eps$. It comes from two sources:
 \begin{enumerate}[left=0pt,itemsep=1pt,topsep=1pt]
  \item \textbf{Cross-mechanism contrast.} Different mechanism families reach
@@ -141,9 +185,9 @@ does not suffer from $\eps$--$\Sdist$ confounding at all.
 Nominal budgets \emph{cannot be compared} across mechanism families: DP-SGD
 gives example-level $(\eps,\delta)$-DP, while SanText-style sanitization gives
 word-level metric LDP. We do not pretend they are on the same scale. In
-model~\eqref{eq:model}, $\eps$ is only an ordinal, mechanism-specific dose
-variable (interacted with mechanism fixed effects). \emph{$\Sdist$ is the
-common axis across mechanisms.} If alignment degradation is predicted better
+model~\eqref{eq:model}, the privacy level enters only through the privacy-level rank
+$d$, coded within its own mechanism and given a per-mechanism slope $b_m$.
+\emph{$\Sdist$ is the common axis across mechanisms.} If alignment degradation is predicted better
 by the measurable, comparable quantity ($\Sdist$) than by the incomparable
 nominal one ($\eps$), that is a useful result on its own.
 \end{remark}
@@ -194,8 +238,8 @@ week~2. Qwen3.5 stays as an optional extra arm for the
 perturbation-only mechanisms (M1--M2), which do not depend on architecture.
 
 \paragraph{Grid and compute.}
-$3$ models $\times$ $4$ mechanisms $\times$ $4$ dose levels $\times$ $3$ seeds
-$= 144$ runs ($108$ excluding M0, which has no dose axis; M0 runs
+$3$ models $\times$ $4$ mechanisms $\times$ $4$ perturbation levels $\times$ $3$ seeds
+$= 144$ runs ($108$ excluding M0, which has no privacy level axis; M0 runs
 $3\times3=9$ seeds/models, total $117$ training runs plus evaluation passes).
 Each run is a LoRA fine-tune of a $\le$2B model on $\sim$10k instruction
 pairs: $\approx$20--40 GPU-minutes on a single A100/H100, i.e.\ the full grid
@@ -285,10 +329,10 @@ cell. Report:
  of Hypothesis~\ref{hyp:main} against $\Delta = 0.10$, and the TOST
  equivalence test for the null branch (Remark~\ref{rem:null}); per-mechanism
  Wald tests of $|c| > |b_{m}|$ (Hypothesis~\ref{hyp:dom}).
- \item The mediation decomposition: proportion of the total $\eps$-effect
+ \item The mediation decomposition: proportion of the total privacy-level effect
  (within each mechanism) carried by the $\Sdist$ path, with
  bootstrap CIs over seeds.
- \item Privacy--distortion--alignment curves: $Y$ vs.\ dose and $Y$ vs.\
+ \item Privacy--distortion--alignment curves: $Y$ vs.\ privacy level and $Y$ vs.\
  $\Sdist$, per mechanism and model, across both datasets---the
  curator's deliverable~3.
  \item The entity-density interaction (Hypothesis~\ref{hyp:mod}): refit
@@ -348,7 +392,7 @@ M2 & Mechanisms: M1--M3 implemented; \textbf{DP-SGD/LoRA per-example-gradient
  smoke test on all three architectures} (the largest technical risk, so it
  is done early on purpose); pilot $=1$ model $\times$ all arms $\times 1$
  seed. \textbf{Gate:} the pilot must show clearly different $\Sdist$ values
- at matched dose across mechanisms; pre-registration commit. \\
+ at matched privacy level across mechanisms; pre-registration commit. \\
 M3 & Main pass: full $144$-run grid across both datasets;
  privacy--distortion--alignment curves; fit model~\eqref{eq:model};
  mediation decomposition; diagnostics. \\
