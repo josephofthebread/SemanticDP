@@ -61,6 +61,12 @@
 \setbeamersize{text margin left=0.6cm,
                text margin right=0.6cm}
 
+\setbeamertemplate{footline}{%
+  \ifnum\value{framenumber}=1\else
+  \ifnum\value{framenumber}=\inserttotalframenumber\else
+    \hfill\usebeamercolor[fg]{normal text}\insertframenumber{}/\inserttotalframenumber\kern0.6cm\vskip0.35cm
+  \fi\fi}
+
 \definecolor{smilesyellow}{HTML}{FFC300}
 
 \setbeamercolor{normal text}{fg=black, bg=white}
