@@ -2,9 +2,10 @@
 
 Copyright (c) 2026 The Project Authors. Licensed after MIT license.
 
-## Project information
-- [Research proposal](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip)
-- [Presentation](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/pres.zip)
+## Generic information
+- Most recent version of research proposal: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip).
+- Most recent version of pre-defense presentation: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/pres.zip).
+- Wandb (experiments): <https://wandb.ai/josephofthebread/SemanticDP/overview>.
 
 ## Data generation
 Use `./gendata.py`:
