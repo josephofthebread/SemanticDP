@@ -1,31 +1,25 @@
 #! /usr/bin/env python
 import json
+import logging
 from argparse import ArgumentParser, Namespace
 from ast import literal_eval
-from hashlib import sha256
-from logging import INFO, basicConfig, getLogger
 from pathlib import Path
 from random import Random
-from subprocess import check_output
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from datasets import load_dataset
 from dotenv import load_dotenv
 
 import wandb
+from common import EXTRACTABLE_LABELS, MANIFEST_PATH, Row, Span, build_version, sha256_file
 
 SCRIPT = Path(__file__).resolve()
-ROOT = SCRIPT.parent
-DATA_DIR = ROOT / "data"
-MANIFEST_PATH = DATA_DIR / "_manifest.json"
 
-log = getLogger("gendata")
+log = logging.getLogger("gendata")
 
 NEMOTRON_REPO = "nvidia/Nemotron-PII"
 ALPACA_REPO = "tatsu-lab/alpaca"
-
-Row = dict[str, Any]
-Span = dict[str, Any]
 
 BIOMEDICAL_DOMAINS = frozenset(
   {
@@ -36,50 +30,6 @@ BIOMEDICAL_DOMAINS = frozenset(
     "Pharmaceuticals",
   }
 )
-
-EXTRACTABLE_LABELS = {
-  "first_name": "patient's first name",
-  "last_name": "patient's last name",
-  "date_of_birth": "date of birth",
-  "medical_record_number": "medical record number",
-  "health_plan_beneficiary_number": "health plan beneficiary number",
-  "phone_number": "phone number",
-  "email": "email address",
-  "date": "date",
-  "time": "time",
-  "age": "age",
-  "street_address": "street address",
-  "employee_id": "employee ID",
-  "certificate_license_number": "certificate or license number",
-  "account_number": "account number",
-  "customer_id": "customer ID",
-}
-
-
-def sha256_file(path: Path) -> str:
-  digest = sha256()
-  with path.open("rb") as handle:
-    for chunk in iter(lambda: handle.read(1 << 20), b""):
-      digest.update(chunk)
-  return digest.hexdigest()
-
-
-def git(*command: str) -> str:
-  return check_output(["git", *command], cwd=ROOT, text=True).strip()
-
-
-def build_version() -> dict[str, Any]:
-  """Pin what produced the data, not just what the data is.
-
-  The commit alone is not enough: a build from a dirty tree carries a commit
-  whose gendata.py is not the one that ran. `script_sha256` is the
-  authoritative half, and `git_dirty` says whether to trust the commit.
-  """
-  return {
-    "script_sha256": sha256_file(SCRIPT),
-    "git_commit": git("rev-parse", "HEAD"),
-    "git_dirty": bool(git("status", "--porcelain")),
-  }
 
 
 def parse_spans(row: Row) -> list[Span]:
@@ -147,6 +97,18 @@ def instructionize(row: Row, rng: Random) -> Row | None:
   return None
 
 
+def record(row: Row, example_id: str) -> Row:
+  """A Nemotron document in record form, for the probes that score gold spans."""
+  return {
+    "example_id": example_id,
+    "source_uid": row["uid"],
+    "domain": row["domain"],
+    "document_type": row["document_type"],
+    "text": row["text"],
+    "spans": row["spans"],
+  }
+
+
 def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   dataset = load_dataset(NEMOTRON_REPO)
   rows = [row for split in dataset for row in dataset[split]]
@@ -172,25 +134,21 @@ def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   if len(train_pool) < args.train_n:
     raise RuntimeError(f"nemotron: need {args.train_n} train rows, only {len(train_pool)} available")
 
+  train_rows = train_pool[: args.train_n]
   rng = Random(args.seed + 2)
-  train = [example for row in train_pool[: args.train_n] if (example := instructionize(row, rng))]
+  train = [example for row in train_rows if (example := instructionize(row, rng))]
   for index, example in enumerate(train):
     example["example_id"] = f"nemotron-{index:06d}"
   log.info(f"nemotron: {len(train)} train examples instructionized")
 
-  probe = [
-    {
-      "example_id": f"probe-{index:05d}",
-      "source_uid": row["uid"],
-      "domain": row["domain"],
-      "document_type": row["document_type"],
-      "text": row["text"],
-      "spans": row["spans"],
-    }
-    for index, row in enumerate(groups[uid][0] for uid in probe_uids)
-  ]
+  probe = [record(row, f"probe-{index:05d}") for index, row in enumerate(groups[uid][0] for uid in probe_uids)]
   log.info(f"nemotron: {len(probe)} probe records held out")
-  return {"nemotron_train": train, "nemotron_probe": probe}
+
+  leak_rows = Random(args.seed + 3).sample(train_rows, args.leak_n)
+  leak = [record(row, f"leak-{index:05d}") for index, row in enumerate(leak_rows)]
+  log.info(f"nemotron: {len(leak)} leak records sampled from the training rows")
+
+  return {"nemotron_train": train, "nemotron_probe": probe, "nemotron_leak": leak}
 
 
 def build_alpaca(args: Namespace) -> dict[str, list[Row]]:
@@ -235,71 +193,65 @@ def entity_stats(rows: list[Row]) -> dict[str, Any]:
   }
 
 
-def push(paths: dict[str, Path], manifest: dict[str, Any]) -> None:
-  run = wandb.init(job_type="gendata", config={**manifest["config"], **manifest["build_version"]})
-  for name, path in paths.items():
-    artifact = wandb.Artifact(
-      name=name,
-      type="dataset",
-      description=f"Frozen {name} split for the privacy-mechanism grid.",
-      metadata=manifest["splits"][name],
-    )
-    artifact.add_file(str(path))
-    run.log_artifact(artifact)
-    log.info(f"wandb: logged artifact {name}")
-
-  index = wandb.Artifact(
-    name="manifest", type="manifest", description="Hashes and build version of every split.", metadata=manifest
-  )
-  index.add_file(str(MANIFEST_PATH))
-  run.log_artifact(index)
-  log.info("wandb: logged artifact manifest")
-  run.finish()
-
-
 def main(args: Namespace) -> None:
   load_dotenv()
-  DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-  splits = {**build_nemotron(args), **build_alpaca(args)}
-
-  train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
-  probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
-  assert not train_uids & probe_uids, "probe records leaked into the training corpus"
-
-  paths: dict[str, Path] = {}
-  entries: dict[str, Any] = {}
-  for name, rows in splits.items():
-    path = DATA_DIR / f"{name}.json"
-    path.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
-    paths[name] = path
-    entries[name] = {"sha256": sha256_file(path), **entity_stats(rows)}
-    log.info(f"wrote {path} ({entries[name]['n_rows']} rows)")
-
-  manifest = {
-    "build_version": build_version(),
-    "config": {
-      "seed": args.seed,
-      "train_n": args.train_n,
-      "probe_n": args.probe_n,
-      "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
-      "nemotron_repo": NEMOTRON_REPO,
-      "alpaca_repo": ALPACA_REPO,
-    },
-    "splits": entries,
+  config = {
+    "seed": args.seed,
+    "train_n": args.train_n,
+    "probe_n": args.probe_n,
+    "leak_n": args.leak_n,
+    "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
+    "nemotron_repo": NEMOTRON_REPO,
+    "alpaca_repo": ALPACA_REPO,
   }
-  MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-  log.info(f"wrote {MANIFEST_PATH}")
+  version = build_version(SCRIPT)
 
-  if args.push:
-    push(paths, manifest)
+  with wandb.init(job_type="gendata", config={**config, **version}) as run, TemporaryDirectory() as staging:
+    splits = {**build_nemotron(args), **build_alpaca(args)}
+
+    train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
+    probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
+    assert not train_uids & probe_uids, "probe records leaked into the training corpus"
+
+    entries: dict[str, Any] = {}
+    artifacts = []
+    for name, rows in splits.items():
+      path = Path(staging) / f"{name}.json"
+      path.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
+      entries[name] = {"sha256": sha256_file(path), **entity_stats(rows)}
+      log.info(f"staged {name}: {entries[name]['n_rows']} rows, sha256 {entries[name]['sha256'][:12]}")
+
+      artifact = wandb.Artifact(
+        name=name,
+        type="dataset",
+        description=f"Frozen {name} split for the privacy-mechanism grid.",
+        metadata=entries[name],
+      )
+      artifact.add_file(str(path))
+      artifacts.append(artifact)
+
+    manifest = {"build_version": version, "config": config, "splits": entries}
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    log.info(f"wrote {MANIFEST_PATH}")
+
+    index = wandb.Artifact(
+      name="manifest", type="manifest", description="Hashes and build version of every split.", metadata=manifest
+    )
+    index.add_file(str(MANIFEST_PATH))
+
+    for artifact in [*artifacts, index]:
+      run.log_artifact(artifact)
+      log.info(f"wandb: logged artifact {artifact.name}")
 
 
 if __name__ == "__main__":
-  basicConfig(level=INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+  logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
   parser = ArgumentParser(description="Build the frozen adaptation corpora for the privacy-mechanism grid.")
   parser.add_argument("--seed", type=int, default=0)
   parser.add_argument("--train-n", type=int, default=16384, help="train rows per corpus")
   parser.add_argument("--probe-n", type=int, default=375, help="held-out entity-fidelity probe records")
-  parser.add_argument("--no-push", dest="push", action="store_false", help="skip the wandb artifact upload")
+  parser.add_argument(
+    "--leak-n", type=int, default=375, help="training records re-used for the closed-book leakage probe"
+  )
   main(parser.parse_args())

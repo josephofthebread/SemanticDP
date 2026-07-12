@@ -15,10 +15,10 @@ on:
         description: Held-out entity-fidelity probe records.
         type: number
         default: 375
-      push:
-        description: Push the splits to wandb as artifacts.
-        type: boolean
-        default: true
+      leak-n:
+        description: Training records re-used for the closed-book leakage probe.
+        type: number
+        default: 375
 
 jobs:
   gendata:
@@ -33,10 +33,13 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
         with:
+          # build_version records the commit and whether the tree was dirty, so
+          # the run needs real git history rather than a detached blob.
           fetch-depth: 0
 
+      # The splits only ever live in wandb, so a missing credential is not a
+      # degraded run, it is a lost build. Fail before the minutes are spent.
       - name: Require the wandb environment
-        if: ${{ inputs.push }}
         run: |
           set -eu
           missing=''
@@ -45,7 +48,7 @@ jobs:
           [ -n "${WANDB_PROJECT:-}" ] || missing="$missing WANDB_PROJECT(variable)"
           if [ -n "$missing" ]; then
             echo "::error::Missing required wandb configuration:$missing"
-            echo "Set them in Settings > Secrets and variables > Actions, or re-run with push disabled."
+            echo "Set them in Settings > Secrets and variables > Actions."
             exit 1
           fi
           echo "wandb: entity=$WANDB_ENTITY project=$WANDB_PROJECT"
@@ -64,12 +67,12 @@ jobs:
             --seed '${{ inputs.seed }}' \
             --train-n '${{ inputs.train-n }}' \
             --probe-n '${{ inputs.probe-n }}' \
-            ${{ inputs.push && '' || '--no-push' }}
+            --leak-n '${{ inputs.leak-n }}'
 
       - name: Upload the manifest
         uses: actions/upload-artifact@v4
         with:
           name: manifest
-          path: data/_manifest.json
+          path: _manifest.json
           if-no-files-found: error
           retention-days: 30
