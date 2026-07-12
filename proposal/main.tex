@@ -1,0 +1,366 @@
+\documentclass{article}
+
+% ============================================================
+% PACKAGES
+% ============================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+\usepackage[a4paper,right=1.4cm,top=1.4cm,left=1.4cm,bottom=1.8cm]{geometry}
+
+\usepackage{amsmath,amssymb,amsthm,mathtools,bm}
+\usepackage{booktabs,array}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage[inline]{enumitem}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,
+ citecolor=green!50!black,urlcolor=blue!70!black]{hyperref}
+\usepackage[expansion=false]{microtype}
+\emergencystretch=1.5em
+
+\usepackage[numbers,sort&compress]{natbib}
+
+% ------------------------------------------------------------
+% Theorem environments
+% ------------------------------------------------------------
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{conjecture}[theorem]{Conjecture}
+\newtheorem{hypothesis}[theorem]{Hypothesis}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}[section]
+
+% ------------------------------------------------------------
+% Convenience macros
+% ------------------------------------------------------------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Sdist}{S}
+\newcommand{\seclabel}[1]{\label{sec:#1}}
+\newcommand{\secref}[1]{Section~\ref{sec:#1}}
+\DeclareMathOperator*{\argmin}{argmin}
+
+\title{Does Privacy Distort Alignment?}
+\author{}
+\date{}
+
+% ============================================================
+% DOCUMENT
+% ============================================================
+\begin{document}
+\maketitle
+
+\section{Thesis}\seclabel{thesis}
+\paragraph{Setup.}
+Let $\theta_0$ be a small instruction-tuned open-weight LM. A privacy
+mechanism $m \in \mathcal{M}$ applied at budget $\eps$ acts either on the
+adaptation data (text sanitization, token perturbation) or on the adaptation
+procedure itself (DP-SGD), producing a perturbed model or
+inference pipeline $\theta_{m,\eps}$. Each run yields two measurements:
+a \emph{semantic distortion} score $\Sdist \in [0,1]$, computed on the
+perturbed text or on generations relative to the unperturbed reference and, by
+construction, \emph{without reference to} $\eps$; and an \emph{alignment
+degradation} score $Y$, the drop relative to the no-privacy baseline on a fixed
+evaluation suite (truthfulness, hallucination; \secref{metrics}).
+
+\paragraph{Claim.}
+The project's central research question: is DP-induced alignment degradation
+driven by semantic distortion of the training/inference signal, or by
+non-semantic side effects of DP noise? We formalize this as a simple linear model:
+\begin{equation}\label{eq:model}
+ Y_{i} = a + b\, f(\eps_i;\, m_i) + c\, \Sdist_i + e_i,
+\end{equation}
+where $a$ collects the intercept, mechanism fixed effects, and a random
+intercept per base model, and $e_i$ is the error term. $Y$, $\Sdist$, and
+$f(\eps)$ are z-scored before fitting, so $b$ and $c$ are
+standardized effects on a common scale and can be compared directly.
+
+\begin{hypothesis}[Pre-registered, primary: minimum effect]\label{hyp:main}
+$|c| \ge \Delta$ in model~\eqref{eq:model}, with $\Delta = 0.10$
+standardized units fixed in advance. In words: semantic distortion has a
+practically meaningful effect on alignment degradation, not merely a nonzero
+one. In the mediation decomposition of the total effect of $\eps$ on $Y$, the
+indirect path through $\Sdist$ carries a non-trivial share.
+\end{hypothesis}
+
+\begin{hypothesis}[Secondary: dominance]\label{hyp:dom}
+$|c| > |b_{m}|$ for each mechanism $m$: semantic distortion
+predicts degradation more strongly than the nominal privacy dose does.
+(Because $\eps$ is ordinal and mechanism-specific, $b$ is estimated per
+mechanism; the comparison is a Wald test per mechanism, so this hypothesis may
+be underpowered and is therefore secondary.)
+\end{hypothesis}
+
+\begin{hypothesis}[Secondary: moderation by entity density]\label{hyp:mod}
+Distortion hurts alignment more when the text is fact-dense. Formally: in
+model~\eqref{eq:model} extended with a $\Sdist \times$ dataset interaction
+term, the coefficient of $\Sdist$ is larger on the entity-rich corpus
+(Nemotron-PII) than on the entity-poor one (Alpaca). If confirmed, this
+bounds how far results from generic instruction data generalize to truly
+private corpora---and implies mechanisms should be evaluated on entity-rich
+text to be trusted.
+\end{hypothesis}
+
+\begin{conjecture}[Directional, secondary]\label{conj:shape}
+The privacy--alignment relationship is not monotone in $\eps$ alone: at matched
+nominal privacy levels, mechanisms with low $\Sdist$ (semantics-preserving
+sanitization) degrade alignment
+strictly less than mechanisms with high $\Sdist$ (random token replacement),
+and DP-SGD occupies an intermediate
+regime in which degradation is dominated by the \emph{direct} (optimization /
+calibration) path, i.e.\ large $\hat b$-attributable residual at small
+$\Sdist$.
+\end{conjecture}
+
+\paragraph{Identification.}
+Within a single mechanism, $\Sdist$ and $\eps$ are strongly correlated by
+construction: more noise means more distortion. So a regression on one
+mechanism alone cannot separate $b$ from $c$. We need variation in
+$\Sdist$ at fixed $\eps$. It comes from two sources:
+\begin{enumerate}[left=0pt,itemsep=1pt,topsep=1pt]
+ \item \textbf{Cross-mechanism contrast.} Different mechanism families reach
+ a similar privacy level with very different amounts of semantic damage.
+ This is the main source of identification, and the reason the full
+ mechanism grid (\secref{design}) is required.
+ \item \textbf{A non-DP distortion control.} Random token
+ replacement/deletion, tuned to the same distortion levels, produces
+ $\Sdist$ without any privacy mechanism. If this arm degrades alignment
+ as much as the DP arms at equal $\Sdist$, then semantic damage---not DP
+ itself---is the cause. If not, the difference points to DP-specific,
+ non-semantic effects.
+\end{enumerate}
+We check collinearity with variance inflation factors (VIF) in every fitted
+model. If VIF $>10$ for $\Sdist$, we switch to a simpler comparison:
+mechanisms against each other at each fixed privacy level. That comparison
+does not suffer from $\eps$--$\Sdist$ confounding at all.
+
+\begin{remark}[On matching $\eps$ across mechanism types]\label{rem:eps}
+Nominal budgets \emph{cannot be compared} across mechanism families: DP-SGD
+gives example-level $(\eps,\delta)$-DP, while SanText-style sanitization gives
+word-level metric LDP. We do not pretend they are on the same scale. In
+model~\eqref{eq:model}, $\eps$ is only an ordinal, mechanism-specific dose
+variable (interacted with mechanism fixed effects). \emph{$\Sdist$ is the
+common axis across mechanisms.} If alignment degradation is predicted better
+by the measurable, comparable quantity ($\Sdist$) than by the incomparable
+nominal one ($\eps$), that is a useful result on its own.
+\end{remark}
+
+\begin{remark}[The null is a result]\label{rem:null}
+The hypothesis and $\Delta$ are pre-registered: committed to the repository
+before the main experimental pass. Three outcomes are possible. If the
+confidence interval for $c$ lies entirely outside $(-\Delta, \Delta)$,
+Hypothesis~\ref{hyp:main} is confirmed. If it lies entirely inside, a two
+one-sided equivalence test (TOST) lets us state that the semantic pathway is
+practically absent---not just ``not detected''. In that case degradation
+comes from non-semantic pathways (optimization instability, calibration
+shifts), so semantics-preserving mechanism design would \emph{not} help
+alignment. This is a valid negative result, and it directly informs the
+mitigation deliverable. If the interval straddles $\Delta$, the result is
+inconclusive and is reported as such. All three outcomes lead to a written
+conclusion.
+\end{remark}
+
+\section{Experimental design}\seclabel{design}
+\paragraph{Mechanism grid ($4$ arms).}
+\begin{enumerate}[left=0pt,itemsep=1pt,topsep=1pt]
+ \item \textbf{M0 --- No privacy.} Standard LoRA
+ fine-tuning on clean data; defines the zero point of $Y$ and $\Sdist$.
+ \item \textbf{M1 --- Random token perturbation (non-DP control).} Uniform
+ token replacement/deletion at rates
+ $p \in \{0.05, 0.15, 0.30, 0.50\}$ chosen to span the $\Sdist$ range
+ realized by the DP arms.
+ \item \textbf{M2 --- Semantic text sanitization (metric LDP).}
+ SanText-style word-level sanitization with
+ embedding-space exponential mechanism (TEM as a
+ variant if time permits), $\eps \in \{1, 3, 6, 12\}$ (word-level).
+ \item \textbf{M3 --- DP fine-tuning.} DP-SGD applied to LoRA adapters:
+ per-example gradient clipping plus Gaussian noise, implemented directly
+ on the adapter parameters via \texttt{torch.func} (\texttt{vmap} over
+ per-example gradients is cheap because the adapter parameter count is
+ small); $\eps \in \{1, 4, 8, 16\}$ at $\delta = 10^{-5}$
+ (example-level).
+\end{enumerate}
+
+\paragraph{Models ($3$ families, dense only).}
+Qwen3-1.7B, Llama-3.2-1B(-Instruct), and Falcon3-1B-Instruct, with the 3--4B siblings as
+a scale check in week~3 if compute allows. We deliberately exclude the newest
+Qwen3.5 small series from the critical path: its hybrid Gated-DeltaNet~+
+sparse-MoE architecture makes per-example gradient computation awkward, and
+debugging privacy accounting on a novel architecture is too risky for
+week~2. Qwen3.5 stays as an optional extra arm for the
+perturbation-only mechanisms (M1--M2), which do not depend on architecture.
+
+\paragraph{Grid and compute.}
+$3$ models $\times$ $4$ mechanisms $\times$ $4$ dose levels $\times$ $3$ seeds
+$= 144$ runs ($108$ excluding M0, which has no dose axis; M0 runs
+$3\times3=9$ seeds/models, total $117$ training runs plus evaluation passes).
+Each run is a LoRA fine-tune of a $\le$2B model on $\sim$10k instruction
+pairs: $\approx$20--40 GPU-minutes on a single A100/H100, i.e.\ the full grid
+is $\sim$60--80 GPU-hours---feasible within the school's allocation, with the
+pilot ($1$ model $\times$ all arms $\times$ $1$ seed $=13$ runs) costing under
+one GPU-day.
+
+\paragraph{Data.}
+The privacy mechanisms need a text corpus to act on: M1--M2 rewrite the
+training text, and M3 fine-tunes on it privately. This corpus plays the role
+of the ``sensitive data''. The two corpora should differ in \emph{entity
+density}, because privacy risk concentrates in names, numbers, and facts, and
+mechanisms treat these tokens differently from common words---rare tokens sit
+in sparse regions of embedding space, so sanitization replaces them with
+distant, fact-changing substitutes, and DP-SGD suppresses exactly the
+memorization of such rare sequences. The entity-density contrast lets us test
+whether the distortion--alignment link depends on it (\secref{analysis}).
+
+\emph{Entity-rich corpus: Nemotron-PII}
+(\texttt{nvidia/Nemotron-PII}, CC~BY~4.0): $100$k synthetic records
+(emails, clinical notes, forms, free text) across $50$+ industries, with
+\emph{gold span-level annotations} for $55$+ PII/PHI entity types. It is
+built precisely as a stand-in for sensitive data: realistic PII with zero
+re-identification risk. Two properties matter for us. First, the gold spans
+make $\Sdist_{\mathrm{ent}}$ (\secref{metrics}) \emph{exact}---entity
+preservation is checked against annotations instead of a noisy NER model.
+Second, because every entity is known, we can directly measure whether
+fine-tuned models reproduce or corrupt specific entities, which links the
+distortion measurements to memorization. One adaptation step is required:
+the records are documents, not instruction pairs, so we wrap each record
+into a templated task (``Summarize this note'', ``Extract the appointment
+date'', ``Draft a reply to this email''), a standard instructionization
+step performed once and reused by all arms.
+
+\emph{Low-entity-density corpus: Alpaca} (a fixed 10k subset of its 52k
+instruction--response pairs): generic assistant tasks with few named
+entities and numbers, permissively licensed, and the standard small
+instruction-tuning corpus, which keeps results comparable to prior work.
+Evaluation data are disjoint from adaptation data by construction.
+
+\section{Metrics}\seclabel{metrics}
+\paragraph{Semantic distortion $\Sdist$ (fixed before the main pass).}
+\emph{Primary:} mean cosine distance between sentence
+embeddings of original vs.\ perturbed/sanitized
+training text (for M1--M2) or of generations from $\theta_{m,\eps}$ vs.\
+$\theta_0$ on a fixed probe set (for M3, where no perturbed text exists).
+\emph{Robustness:} (i) semantic entropy of
+generations, connecting $\Sdist$ to the hallucination literature at the level
+of meaning rather than surface tokens; (ii) NLI-based fact-level agreement
+(AlignScore). The primary measure is fixed now so that it cannot be changed
+after seeing the results; the robustness measures appear only in a
+sensitivity table.
+
+\emph{Decomposition of $\Sdist$.} $\Sdist$ is additionally reported as two
+components: $\Sdist_{\mathrm{ent}}$, the fraction of named entities and
+numbers not preserved between original and perturbed text (checked against
+gold spans on Nemotron-PII; NER-based match on the second corpus), and
+$\Sdist_{\mathrm{gen}}$, the residual embedding drift after masking
+entities. Prediction: $\Sdist_{\mathrm{ent}}$ drives hallucination and
+truthfulness degradation, while $\Sdist_{\mathrm{gen}}$ drives
+instruction-following degradation. Fitting model~\eqref{eq:model} with the
+two components in place of $\Sdist$ tests this directly.
+
+\paragraph{Alignment degradation $Y$.}
+Three components, all judge-free (no LLM judge anywhere in the
+measurement chain): \textbf{TruthfulQA} (MC1/MC2, truthfulness),
+\textbf{IFEval} (instruction following; each prompt carries programmatically
+verifiable constraints, so scoring is exact), and an \textbf{entity-fidelity
+probe} (hallucination): the model is asked to reproduce facts from held-out
+Nemotron-PII records, and answers are checked against the gold entity
+spans---correct, corrupted, or fabricated---with no judge noise. TruthfulQA
+and IFEval are subsampled to $300$--$500$ items so a full evaluation pass per
+checkpoint takes minutes. $Y$ is the standardized drop relative to the
+same-model M0 baseline, averaged across the three components (per-component
+coefficients reported in the appendix).
+\emph{Secondary probes of the non-semantic (direct) pathway:} expected
+calibration error on TruthfulQA MC, and training-loss variance across seeds
+as a proxy for optimization instability.
+
+\section{Analysis plan}\seclabel{analysis}
+Fit model~\eqref{eq:model} by restricted maximum likelihood
+(\texttt{statsmodels} MixedLM), $144$ observations, random intercepts per
+model family; cluster-robust standard errors by (model $\times$ mechanism)
+cell. Report:
+\begin{enumerate}[left=0pt,itemsep=1pt,topsep=1pt]
+ \item $\hat c$ with $95\%$ CI; the pre-registered minimum-effect test
+ of Hypothesis~\ref{hyp:main} against $\Delta = 0.10$, and the TOST
+ equivalence test for the null branch (Remark~\ref{rem:null}); per-mechanism
+ Wald tests of $|c| > |b_{m}|$ (Hypothesis~\ref{hyp:dom}).
+ \item The mediation decomposition: proportion of the total $\eps$-effect
+ (within each mechanism) carried by the $\Sdist$ path, with
+ bootstrap CIs over seeds.
+ \item Privacy--distortion--alignment curves: $Y$ vs.\ dose and $Y$ vs.\
+ $\Sdist$, per mechanism and model, across both datasets---the
+ curator's deliverable~3.
+ \item The entity-density interaction (Hypothesis~\ref{hyp:mod}): refit
+ model~\eqref{eq:model} with a $\Sdist \times$ dataset term; a
+ significant interaction means the distortion--alignment link depends
+ on how fact-dense the corpus is.
+ \item The $\Sdist$ decomposition fit: $\Sdist_{\mathrm{ent}}$ and
+ $\Sdist_{\mathrm{gen}}$ in place of $\Sdist$ (\secref{metrics}),
+ with per-benchmark coefficients.
+ \item Diagnostics: VIF for $\Sdist$, residuals-by-mechanism, and the
+ within-$\eps$-stratum contrast as the collinearity fallback.
+\end{enumerate}
+
+\paragraph{Reproducibility.}
+Fixed seeds alone do not determinize GPU training. The repository therefore
+pins a full environment lockfile,
+enables \texttt{torch.use\_deterministic\_algorithms(True)} where kernels
+permit, logs every config, seed, checkpoint hash, and metric to
+\texttt{wandb}. Most importantly, the $3$ seeds per cell give the
+within-condition variance: every plotted point has an error bar, and no claim
+rests on a single run. The pre-registration (hypothesis,
+$\Delta$, primary $\Sdist$ metric, exclusion rules) is a timestamped commit
+made before the week-3 pass.
+
+\section{Benchmarks}\seclabel{benchmarks}
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Component & Role & Primary metric & Guards against \\
+\midrule
+TruthfulQA (MC1/MC2) & truthfulness $Y$ & accuracy drop vs.\ M0 & imitative falsehoods \\
+IFEval & instruction following $Y$ & constraint pass-rate drop & judge-based scoring \\
+Entity-fidelity probe & hallucination $Y$ & gold-span match rate & judge noise \\
+Embedding distance & primary $\Sdist$ & cosine distance & metric cherry-picking \\
+Semantic entropy / AlignScore & robustness $\Sdist$ & rank agreement w/ primary & measure-specific artifacts \\
+M1 random perturbation & non-DP control & $Y$ at matched $\Sdist$ & ``DP is special'' confound \\
+ECE + loss variance & direct-path probes & calibration / stability & unexplained residual \\
+\bottomrule
+\end{tabular}
+\caption{Evaluation suite and the role of each component.}
+\label{tab:bench}
+\end{table}
+
+\section{Milestones}\seclabel{milestones}
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}p{0.06\columnwidth}p{0.86\columnwidth}@{}}
+\toprule
+Wk & Milestone \\
+\midrule
+M1 & Setup: repo skeleton, environment lockfile, eval harness over TruthfulQA
+ + IFEval subsamples and the entity-fidelity probe, $\Sdist$ metrics implemented and unit-tested on
+ synthetic perturbations; literature map. \textbf{Gate:} clean M0 baseline
+ numbers on all three models. \\
+M2 & Mechanisms: M1--M3 implemented; \textbf{DP-SGD/LoRA per-example-gradient
+ smoke test on all three architectures} (the largest technical risk, so it
+ is done early on purpose); pilot $=1$ model $\times$ all arms $\times 1$
+ seed. \textbf{Gate:} the pilot must show clearly different $\Sdist$ values
+ at matched dose across mechanisms; pre-registration commit. \\
+M3 & Main pass: full $144$-run grid across both datasets;
+ privacy--distortion--alignment curves; fit model~\eqref{eq:model};
+ mediation decomposition; diagnostics. \\
+M4 & Mitigation probe (one semantics-preserving variant, e.g.\ TEM or
+ sanitization with entity protection, evaluated at the worst-case cell);
+ equivalence analysis if null; paper + code release. \\
+\bottomrule
+\end{tabular}
+\caption{Milestones. The week-2 gate is the go/no-go point: if DP-SGD fails on
+an architecture, that model is replaced from the dense fallback pool
+(Falcon3-3B, Llama-3.2-3B) rather than debugged past the gate.}
+\label{tab:miles}
+\end{table}
+
+\end{document}
