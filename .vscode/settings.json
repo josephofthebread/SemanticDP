@@ -10,7 +10,12 @@
   "notebook.formatOnSave.enabled": true,
   "cSpell.words": [
     "Dudich",
+    "ipynb",
     "latexmk",
+    "mypy",
+    "pyproject",
+    "tatsu",
+    "uids",
     "xelatex"
   ],
 }
