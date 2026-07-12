@@ -1,0 +1,652 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+% ============================================================
+%  METADATA
+% ============================================================
+% Plain-text macros: they are also what hyperref writes into the PDF strings,
+% so the metadata stays free of markup.
+\newcommand{\doctitle}{Does Privacy Distort Alignment?}
+\newcommand{\docsubtitle}{Decomposing the Effects of Differential Privacy
+                          on LLM Hallucination and Misalignment}
+\newcommand{\docauthor}{Dmitry Scherbakov, Mikhail Dudich}
+
+\title{\doctitle}
+\subtitle{\docsubtitle}
+\author{\docauthor}
+\date{}
+
+% ============================================================
+%  PACKAGES
+% ============================================================
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+
+% Fonts
+\usepackage[scaled=0.92]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+
+% Mathematics
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{bm}
+
+% Graphics & Figures
+\usepackage{graphicx}
+\usepackage{tikz}
+
+% Tables
+\usepackage{booktabs}
+\usepackage{array}
+
+% Colors & Hyperlinks
+\usepackage{xcolor}
+\hypersetup{pdfauthor={\docauthor},
+            pdftitle={\doctitle},
+            pdfsubject={\docsubtitle},
+            pdfkeywords={differential privacy,alignment,hallucination,large language models},
+            pdfproducer={},
+            pdfcreator={},
+            colorlinks=true,
+            linkcolor=black,
+            citecolor=black,
+            urlcolor=black}
+
+% ============================================================
+%  THEME
+% ============================================================
+\usetheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamersize{text margin left=0.6cm,
+               text margin right=0.6cm}
+
+\definecolor{smilesyellow}{HTML}{FFC300}
+
+\setbeamercolor{normal text}{fg=black, bg=white}
+\setbeamercolor{structure}{fg=black}
+\setbeamercolor{itemize item}{fg=black}
+\setbeamercolor{itemize subitem}{fg=black}
+\setbeamertemplate{itemize item}{\scriptsize\raisebox{0.15ex}{$\blacksquare$}}
+\setbeamertemplate{itemize subitem}{\scriptsize\raisebox{0.15ex}{$\square$}}
+\setbeamerfont{itemize/enumerate body}{size=\footnotesize}
+\setbeamerfont{itemize/enumerate subbody}{size=\scriptsize}
+
+% ------------------------------------------------------------
+% Backgrounds: the yellow panel bleeds to the left, top and bottom edges,
+% exactly as in the curator's deck.
+% ------------------------------------------------------------
+\newlength{\panelwidth}
+\setlength{\panelwidth}{0.46\paperwidth}
+
+\newcommand{\smileslogo}{%
+  \node[anchor=north east,
+        inner xsep=0.5cm,
+        inner ysep=0.35cm] at (\paperwidth, \paperheight)
+       {\includegraphics[width=2.5cm]{smiles-logo.png}};
+}
+
+\newcommand{\skoltechlogo}{%
+  \node[anchor=south east,
+        inner xsep=0.5cm,
+        inner ysep=0.5cm] at (\paperwidth, 0cm)
+       {\includegraphics[width=3.3cm]{skoltech-aic.pdf}};
+}
+
+\newcommand{\bgtitle}{%
+  \begin{tikzpicture}
+    \useasboundingbox (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \fill[smilesyellow] (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \smileslogo
+    \skoltechlogo
+  \end{tikzpicture}%
+}
+
+\newcommand{\bgsplit}{%
+  \begin{tikzpicture}
+    \useasboundingbox (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \fill[white] (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \fill[smilesyellow] (0cm, 0cm) rectangle (\panelwidth, \paperheight);
+    \smileslogo
+  \end{tikzpicture}%
+}
+
+\newcommand{\bgwide}{%
+  \begin{tikzpicture}
+    \useasboundingbox (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \fill[white] (0cm, 0cm) rectangle (\paperwidth, \paperheight);
+    \smileslogo
+  \end{tikzpicture}%
+}
+
+% ============================================================
+%  CUSTOM COMMANDS
+% ============================================================
+
+% #1 - slide body, on a full yellow canvas.
+\newcommand{\titleframe}[1]{%
+  \setbeamertemplate{background canvas}{\bgtitle}%
+  \begin{frame}[t]
+    #1
+  \end{frame}
+}
+
+% #1 - yellow panel (the claim), #2 - white panel (the detail).
+\newcommand{\splitframe}[2]{%
+  \setbeamertemplate{background canvas}{\bgsplit}%
+  \begin{frame}[t]
+    \vspace*{0.35cm}
+    \begin{columns}[T, onlytextwidth]
+      \begin{column}{6.3cm}
+        \small\raggedright
+        #1
+      \end{column}
+      \hfill
+      \begin{column}{7.5cm}
+        \vspace*{0.9cm}
+        \footnotesize\raggedright
+        #2
+      \end{column}
+    \end{columns}
+  \end{frame}
+}
+
+% #1 - title, #2 - full-width body on a white canvas.
+\newcommand{\wideframe}[2]{%
+  \setbeamertemplate{background canvas}{\bgwide}%
+  \begin{frame}[t]
+    \vspace*{0.35cm}
+    {\large\bfseries #1}
+    \par\vspace{0.45cm}
+    \footnotesize
+    #2
+  \end{frame}
+}
+
+\newcommand{\panelhead}[1]{{\large\bfseries #1}\par\vspace{0.3cm}}
+
+% Notation, kept identical to the proposal
+\newcommand{\eps}{\varepsilon}
+\newcommand{\Sdist}{S}
+
+% ============================================================
+%  DOCUMENT
+% ============================================================
+\begin{document}
+
+\titleframe{%
+  \vspace*{1.5cm}
+  \begin{center}
+    {\LARGE\bfseries \doctitle}\\[0.6em]
+    {\large \docsubtitle}
+  \end{center}
+  \vfill
+  {\small
+    SMILES 2026 pre-defense \\[0.4em]
+    \textbf{\docauthor}}
+  \vspace*{0.5cm}
+}
+
+\splitframe{%
+  \panelhead{The question posed}
+  When DP degrades LLM alignment,
+  is the degradation caused by measurable \textbf{semantic distortion} of the
+  training signal,
+  or by \textbf{other effects} of DP noise ---
+  reduced optimization quality,
+  calibration shifts,
+  altered refusal/helpfulness trade-offs?
+}{%
+  The conjecture behind the project is that privacy strength and alignment quality are
+  not related monotonically:
+  DP may harm,
+  preserve,
+  or occasionally improve alignment,
+  depending on whether the noise changes task-relevant meaning.
+  \vspace{0.35cm}
+
+  Testing that requires a quantity the current literature does not report:
+  \textbf{semantic distortion measured independently of the privacy budget $\eps$}.
+  \vspace{0.35cm}
+
+  Our contribution is to construct that quantity,
+  and to estimate the two pathways separately,
+  on one common scale.
+}
+
+\splitframe{%
+  \panelhead{Formalization}
+  Every run gives two numbers:
+  a semantic distortion score $\Sdist \in [0,1]$,
+  computed \emph{without reference to} $\eps$,
+  and an alignment degradation score $Y$,
+  the drop against the no-privacy baseline.
+  \vspace{0.4cm}
+
+  One regression separates the pathways.
+}{%
+  \[
+    Y_{i} = a + b\, f(\eps_i;\, m_i) + c\, \Sdist_i + e_i
+  \]
+  \begin{itemize}
+    \item $a$ --- intercept,
+      mechanism fixed effects,
+      random intercept per base model.
+    \item $b$ --- the \textbf{direct} path:
+      how well the nominal privacy level predicts degradation.
+    \item $c$ --- the \textbf{semantic} path:
+      how well measured distortion predicts degradation.
+    \item $Y$, $\Sdist$ and $f(\eps)$ are z-scored,
+      so $b$ and $c$ live on a common scale and can be compared directly.
+  \end{itemize}
+  \vspace{0.2cm}
+
+  Nominal budgets are not comparable across mechanism families,
+  so $\eps$ enters only as an ordinal, mechanism-specific level.
+  $\Sdist$ is the common axis.
+}
+
+\splitframe{%
+  \panelhead{Hypotheses}
+  Pre-registered before the main experimental pass:
+  the hypotheses,
+  the effect threshold $\Delta = 0.10$ (at least),
+  the primary $\Sdist$ metric,
+  and the exclusion rules,
+  committed to the repository as a timestamped commit.
+}{%
+  \uncover<1->{%
+    \textbf{H1 (primary): minimum effect.}
+    $|c| \ge \Delta$,
+    with $\Delta = 0.10$ standardized units fixed in advance.
+    Semantic distortion has a \emph{practically meaningful} effect on alignment degradation,
+    not merely a nonzero one.
+    \par\vspace{0.35cm}}
+
+  \uncover<2->{%
+    \textbf{H2 (secondary): dominance.}
+    $|c| > |b_m|$ for every mechanism $m$.
+    Measured distortion predicts degradation more strongly than the nominal privacy level does.
+    \par\vspace{0.35cm}}
+
+  \uncover<3->{%
+    \textbf{H3 (secondary): moderation by entity density.}
+    The coefficient of $\Sdist$ is larger on the entity-rich corpus
+    than on the entity-poor one:
+    distortion hurts more when the text is fact-dense.
+    \par\vspace{0.35cm}}
+
+  \uncover<4->{%
+    \textbf{Conjecture (directional).}
+    At matched nominal privacy,
+    low-$\Sdist$ mechanisms degrade alignment strictly less than high-$\Sdist$ ones,
+    and DP-SGD sits in between,
+    dominated by the direct path.
+    \par}
+}
+
+\splitframe{%
+  \panelhead{Identification}
+  Within one mechanism,
+  $\Sdist$ and $\eps$ are collinear by construction:
+  more noise,
+  more distortion.
+  \vspace{0.4cm}
+
+  We need variation in $\Sdist$ \emph{at fixed} $\eps$.
+  It comes from two places.
+}{%
+  \textbf{1. Cross-mechanism contrast.}
+  Different mechanism families reach a similar privacy level with very different amounts
+  of semantic damage.
+  This is the main source of identification,
+  and the reason the full mechanism grid is required.
+  \vspace{0.35cm}
+
+  \textbf{2. A non-DP distortion control.}
+  Random token replacement/deletion,
+  tuned to the same distortion levels,
+  produces $\Sdist$ with no privacy mechanism at all.
+  If it degrades alignment as much as the DP arms at equal $\Sdist$,
+  the damage is semantic.
+  If it does not,
+  the gap is DP-specific.
+}
+
+\splitframe{%
+  \panelhead{Mechanism grid}
+  Four arms,
+  spanning the range from ``no privacy'' to ``privacy with no semantics left'',
+  plus one arm that produces distortion \emph{without} privacy.
+}{%
+  \begin{itemize}
+    \item \textbf{M0 --- no privacy.}
+      Standard LoRA fine-tuning on clean data;
+      defines the zero point of $Y$ and $\Sdist$.
+    \item \textbf{M1 --- random token perturbation (non-DP control).}
+      Uniform replacement/deletion at rates $p \in \{0.05, 0.15, 0.30, 0.50\}$,
+      chosen to span the $\Sdist$ range that the DP arms realize.
+    \item \textbf{M2 --- semantic text sanitization (metric LDP).}
+      SanText-style word-level sanitization with an embedding-space exponential mechanism,
+      $\eps \in \{1, 3, 6, 12\}$ (word-level).
+    \item \textbf{M3 --- DP fine-tuning.}
+      DP-SGD on the LoRA adapters:
+      per-example gradient clipping plus Gaussian noise,
+      $\eps \in \{1, 4, 8, 16\}$ at $\delta = 10^{-5}$ (example-level).
+  \end{itemize}
+}
+
+\splitframe{%
+  \panelhead{Models and compute}
+  \textbf{Models.}
+  Qwen3-1.7B,
+  Llama-3.2-1B-Instruct,
+  Falcon3-1B-Instruct.
+  The 3--4B siblings are a scale check in week~3 if compute allows.
+  \vspace{0.4cm}
+
+  Three seeds in every cell,
+  so every reported point carries an error bar.
+}{%
+  \textbf{The grid,
+    per corpus.}
+  M0 has no privacy level to vary,
+  so it is counted separately:
+  \begin{itemize}
+    \item M0:
+      $3$ models $\times$ $3$ seeds $= 9$ runs.
+    \item M1--M3:
+      $3$ models $\times$ $3$ mechanisms $\times$ $4$ privacy levels $\times$ $3$ seeds
+      $= 108$ runs.
+  \end{itemize}
+  \vspace{0.1cm}
+
+  $117$ runs per corpus,
+  $234$ runs over the two corpora.
+  \vspace{0.3cm}
+
+  \textbf{Cost.}
+  Each run is a LoRA fine-tune of a ${\le}2$B model on ${\sim}10$k instruction pairs:
+  ${\approx}20$--$40$ GPU-minutes on one A100/H100,
+  so ${\approx}80$--$150$ GPU-hours for the full grid.
+  \vspace{0.3cm}
+
+  The pilot
+  ($1$ model $\times$ all arms $\times$ $1$ seed $= 13$ runs)
+  costs under one GPU-day,
+  and it is what the week-2 gate is decided on.
+}
+
+\splitframe{%
+  \panelhead{Data}
+  Two corpora,
+  chosen to differ in \textbf{entity density}.
+  \vspace{0.4cm}
+
+  Privacy risk concentrates in names, numbers and facts,
+  and mechanisms treat those tokens very differently from common words.
+}{%
+  \textbf{Entity-rich: Nemotron-PII}
+  (\texttt{nvidia/Nemotron-PII}, CC~BY~4.0).
+  $100$k synthetic records across $50+$ industries,
+  with \emph{gold span-level annotations} for $55+$ PII/PHI types.
+  \vspace{0.25cm}
+
+  \textbf{Entity-poor: Alpaca}
+  (a fixed 10k subset).
+  Generic assistant tasks,
+  few named entities,
+  the standard small instruction-tuning corpus,
+  which keeps our numbers comparable to prior work.
+  \vspace{0.25cm}
+
+  The contrast between the two is what makes H3 testable.
+}
+
+\splitframe{%
+  \panelhead{Measuring $\Sdist$}
+  The primary metric is fixed \emph{now},
+  before the main pass,
+  so that it cannot be swapped after seeing the results.
+  \vspace{0.4cm}
+
+  Everything else is a sensitivity table.
+}{%
+  \textbf{Primary measure:
+    how far the meaning moved.}
+  We embed the text before and after the mechanism,
+  and take the cosine distance between the two embeddings.
+  \begin{itemize}
+    \item M1--M2 perturb the training text,
+      so we compare the original text with the perturbed text.
+    \item M3 leaves the text untouched and perturbs the training instead,
+      so there is nothing to compare on the text side.
+      We compare what the models \emph{say}:
+      answers of the private model against answers of the clean model,
+      on the same fixed set of prompts.
+  \end{itemize}
+  \vspace{0.25cm}
+
+  \textbf{Two further measures,
+    for robustness.}
+  Semantic entropy,
+  which asks how much the meaning of the answers varies when we resample them,
+  and AlignScore,
+  which asks whether the facts in the answer are entailed by the source.
+  \vspace{0.25cm}
+
+  They are not used to test the hypotheses.
+  They only check that the ordering of the mechanisms by $\Sdist$ does not depend on the
+  measure we picked.
+}
+
+\splitframe{%
+  \panelhead{Measuring $Y$}
+  Three components,
+  all \textbf{judge-free}:
+  no LLM judge appears anywhere in the measurement chain,
+  so no judge noise enters the regression.
+}{%
+  \begin{itemize}
+    \item \textbf{TruthfulQA} (MC1/MC2) --- truthfulness.
+    \item \textbf{IFEval} --- instruction following;
+      every prompt carries programmatically verifiable constraints,
+      so scoring is exact.
+    \item \textbf{Entity-fidelity probe} --- hallucination;
+      the model reproduces facts from held-out Nemotron-PII records,
+      and the answers are matched against the gold spans:
+      correct,
+      corrupted,
+      or fabricated.
+  \end{itemize}
+  \vspace{0.25cm}
+
+  TruthfulQA and IFEval are subsampled to $300$--$500$ items.
+  \vspace{0.25cm}
+}
+
+\splitframe{%
+  \panelhead{Analysis plan}
+  Restricted maximum likelihood
+  (\texttt{statsmodels} MixedLM),
+  $144$ observations,
+  random intercepts per model family,
+  cluster-robust standard errors by (model $\times$ mechanism) cell.
+}{%
+  \begin{itemize}
+    \item $\hat c$ with a $95\%$ CI;
+      the pre-registered minimum-effect test of H1 against $\Delta = 0.10$.
+    \item Per-mechanism Wald tests of $|c| > |b_m|$ for H2.
+    \item Mediation decomposition:
+      the share of the total $\eps$-effect carried by the $\Sdist$ path,
+      with bootstrap CIs over seeds.
+    \item Privacy--distortion--alignment curves:
+      $Y$ against the privacy level,
+      and $Y$ against $\Sdist$,
+      per mechanism and per model,
+      on both corpora.
+    \item The entity-density interaction for H3:
+      refit with an $\Sdist \times$ dataset term.
+    \item Diagnostics:
+      variance inflation factors for $\Sdist$,
+      residuals by mechanism.
+  \end{itemize}
+}
+
+\splitframe{%
+  \panelhead{Secondary: what kind of distortion?}
+  A single $\Sdist$ says how far the meaning moved,
+  not \emph{what} was lost.
+  \vspace{0.4cm}
+
+  Splitting it is a secondary aim:
+  it sharpens the interpretation,
+  but no primary hypothesis depends on it.
+}{%
+  \textbf{Two components.}
+  \begin{itemize}
+    \item $\Sdist_{\mathrm{ent}}$ ---
+      the fraction of named entities and numbers that the mechanism did not preserve,
+      checked against the gold spans.
+    \item $\Sdist_{\mathrm{gen}}$ ---
+      the meaning drift that remains once the entities are masked out.
+  \end{itemize}
+  \vspace{0.25cm}
+
+  \textbf{What we expect.}
+  $\Sdist_{\mathrm{ent}}$ should drive hallucination and truthfulness,
+  because those depend on getting facts right.
+  $\Sdist_{\mathrm{gen}}$ should drive instruction-following,
+  because that depends on intent rather than on facts.
+  \vspace{0.25cm}
+
+  Refitting the model with the two components in place of $\Sdist$,
+  and reading the per-benchmark coefficients,
+  tests this directly.
+}
+
+\wideframe{Evaluation suite: every component guards against something}{%
+  \centering
+  \begin{tabular}{@{}llll@{}}
+    \toprule
+    Component                     & Role                      & Primary metric            & Guards against                 \\
+    \midrule
+    TruthfulQA (MC1/MC2)          & truthfulness $Y$          & accuracy drop vs.\ M0     & imitative falsehoods           \\
+    IFEval                        & instruction following $Y$ & constraint pass-rate drop & judge-based scoring            \\
+    Entity-fidelity probe         & hallucination $Y$         & gold-span match rate      & judge noise                    \\
+    Embedding distance            & primary $\Sdist$          & cosine distance           & metric cherry-picking          \\
+    Semantic entropy / AlignScore & robustness $\Sdist$       & rank agreement w/ primary & measure-specific artifacts     \\
+    M1 random perturbation        & non-DP control            & $Y$ at matched $\Sdist$   & the ``DP is special'' confound \\
+    ECE $+$ loss variance         & direct-path probes        & calibration / stability   & unexplained residual           \\
+    \bottomrule
+  \end{tabular}
+  \par\vspace{0.6cm}
+  \raggedright
+}
+
+\splitframe{%
+  \panelhead{The null is a result}
+  The hypothesis and the threshold $\Delta$ are committed \emph{before} the main pass.
+  \vspace{0.4cm}
+
+  All three possible outcomes lead to a written conclusion,
+  and none of them can be reached by moving the goalposts.
+}{%
+  \textbf{The CI for $c$ lies entirely outside $(-\Delta, \Delta)$.}
+  H1 is confirmed:
+  the semantic pathway carries a practically meaningful share of the damage,
+  and semantics-preserving mechanism design is the lever to pull.
+  \vspace{0.35cm}
+
+  \textbf{The CI lies entirely inside.}
+  A two one-sided equivalence test (TOST) lets us state that the semantic pathway is
+  \emph{practically absent} ---
+  not merely ``not detected''.
+  The mediation account we propose here is then rejected:
+  degradation is optimization- and calibration-driven,
+  semantics-preserving design would \emph{not} help,
+  and the remaining weeks go into the direct-path probes
+  (calibration error, loss variance across seeds)
+  and into a non-linear re-analysis,
+  since a null linear coefficient does not rule out a non-monotone dependence on $\Sdist$.
+  \vspace{0.35cm}
+
+  \textbf{The CI straddles $\Delta$.}
+  Inconclusive,
+  and reported as inconclusive,
+  with the achieved precision stated.
+}
+
+\splitframe{%
+  \panelhead{Progress}
+  The corpus is built,
+  filtered,
+  and annotated,
+  and the repository is running.
+  \vspace{0.4cm}
+
+  The data side was the part with real unknowns ---
+  whether the gold spans survive filtering ---
+  so it was done first.
+}{%
+  \textbf{Done.}
+  \begin{itemize}
+    \item Data pipeline:
+      download,
+      filtering,
+      PII scan,
+      curated split,
+      with per-entity statistics emitted at every stage.
+    \item Nemotron-PII:
+      $200{,}000$ rows scanned,
+      $10{,}000$ curated records written with the gold spans preserved,
+      train/test split fixed.
+      $30+$ entity types are present in the result
+      (\texttt{first\_name} $18{,}091$,
+      \texttt{date} $11{,}419$,
+      \texttt{medical\_record\_number} $10{,}709$,
+      \texttt{ssn} $354$).
+    \item Repository,
+      pinned environment,
+      fixed seeds,
+      \texttt{wandb} logging of every config, seed, checkpoint hash and metric.
+  \end{itemize}
+  \vspace{0.25cm}
+
+  \textbf{Next,
+    in this order.}
+  \begin{itemize}
+    \item Evaluation harness:
+      TruthfulQA,
+      IFEval,
+      entity-fidelity probe.
+    \item $\Sdist$ metrics,
+      unit-tested on synthetic perturbations.
+    \item M1 and M2,
+      then the LoRA loop and the M0 baselines.
+    \item DP-SGD over the adapter parameters via \texttt{torch.func},
+      and the per-example-gradient smoke test on all three architectures.
+  \end{itemize}
+}
+
+\titleframe{%
+  \vspace*{2.2cm}
+  \begin{center}
+    {\LARGE\bfseries Thank you}
+  \end{center}
+  \vspace*{1.3cm}
+  \begin{columns}[T, onlytextwidth]
+    \begin{column}{0.45\textwidth}
+      \centering
+      {\large\bfseries Dmitry Scherbakov}\\[0.4em]
+      {\large \texttt{@scherbakov}}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \centering
+      {\large\bfseries Mikhail Dudich}\\[0.4em]
+      {\large \texttt{@misha\_deus}}
+    \end{column}
+  \end{columns}
+}
+
+\end{document}
