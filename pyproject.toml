@@ -1,0 +1,7 @@
+[project]
+name = "SemanticDP"
+version = "0.1.0"
+description = "Decomposing the Effects of Differential Privacy on LLM Hallucination and Misalignment"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
