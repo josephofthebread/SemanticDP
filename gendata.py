@@ -8,10 +8,10 @@ from random import Random
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 
-import wandb
 from common import EXTRACTABLE_LABELS, MANIFEST_PATH, Row, Span, build_version, sha256_file
 
 SCRIPT = Path(__file__).resolve()

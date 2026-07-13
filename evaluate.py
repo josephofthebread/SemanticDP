@@ -8,6 +8,7 @@ from random import Random
 from typing import Any
 
 import nltk
+import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 from transformers import AutoTokenizer
@@ -15,7 +16,6 @@ from vllm import LLM, SamplingParams
 from vllm.inputs import TokensPrompt
 from vllm.lora.request import LoRARequest
 
-import wandb
 from common import EXTRACTABLE_LABELS, MANIFEST_NAME, Row, build_version, sha256_file
 from ifeval import instructions_registry
 
@@ -278,9 +278,15 @@ def main(args: Namespace) -> None:
     "corpus_alias": args.corpus,
     **build_version(SCRIPT),
   }
+  # The engine is built before wandb.init(). vLLM forks an EngineCore child, and
+  # a child forked from a process with a live wandb run inherits its threads and
+  # service connection: a wandb weakref finalizer then fires inside the child and
+  # deadlocks it on a future that never resolves, leaving the parent waiting in
+  # wait_for_engine_startup forever. Forking first keeps the child clean.
+  model = Model(args)
+
   with wandb.init(job_type="evaluate", name=args.run, config=config) as run:
     corpus = Corpus(run, args.corpus)
-    model = Model(args)
 
     metrics = {name: TASKS[name](model, corpus, args.limit) for name in args.tasks}
     for name, values in metrics.items():

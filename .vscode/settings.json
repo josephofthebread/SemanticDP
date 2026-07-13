@@ -13,6 +13,7 @@
     "Dudich",
     "ifeval",
     "ipynb",
+    "isort",
     "latexmk",
     "mypy",
     "nltk",
