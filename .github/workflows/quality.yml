@@ -1,0 +1,26 @@
+name: Quality
+
+on:
+  push:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync the environment
+        run: make install
+
+      - name: Lint and format-check with ruff
+        run: make ruff
+
+      - name: Type-check with mypy
+        run: make mypy

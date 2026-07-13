@@ -1,0 +1,78 @@
+name: Generate data
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed for the deterministic build.
+        type: number
+        default: 0
+      train-n:
+        description: Train rows per corpus.
+        type: number
+        default: 16384
+      probe-n:
+        description: Held-out entity-fidelity probe records.
+        type: number
+        default: 375
+      leak-n:
+        description: Training records re-used for the closed-book leakage probe.
+        type: number
+        default: 375
+
+jobs:
+  gendata:
+    runs-on: ubuntu-latest
+
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      WANDB_ENTITY: ${{ vars.WANDB_ENTITY }}
+      WANDB_PROJECT: ${{ vars.WANDB_PROJECT }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # build_version records the commit and whether the tree was dirty, so
+          # the run needs real git history rather than a detached blob.
+          fetch-depth: 0
+
+      # The splits only ever live in wandb, so a missing credential is not a
+      # degraded run, it is a lost build. Fail before the minutes are spent.
+      - name: Require the wandb environment
+        run: |
+          set -eu
+          missing=''
+          [ -n "${WANDB_API_KEY:-}" ] || missing="$missing WANDB_API_KEY(secret)"
+          [ -n "${WANDB_ENTITY:-}" ] || missing="$missing WANDB_ENTITY(variable)"
+          [ -n "${WANDB_PROJECT:-}" ] || missing="$missing WANDB_PROJECT(variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required wandb configuration:$missing"
+            echo "Set them in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "wandb: entity=$WANDB_ENTITY project=$WANDB_PROJECT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync the environment
+        run: make install
+
+      - name: Build the corpora
+        run: |
+          uv run python gendata.py \
+            --seed '${{ inputs.seed }}' \
+            --train-n '${{ inputs.train-n }}' \
+            --probe-n '${{ inputs.probe-n }}' \
+            --leak-n '${{ inputs.leak-n }}'
+
+      - name: Upload the manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: _manifest.json
+          if-no-files-found: error
+          retention-days: 30

@@ -9,8 +9,20 @@
   "editor.formatOnSave": true,
   "notebook.formatOnSave.enabled": true,
   "cSpell.words": [
+    "absl",
     "Dudich",
+    "ifeval",
+    "ipynb",
+    "isort",
     "latexmk",
+    "mypy",
+    "nltk",
+    "punkt",
+    "pyproject",
+    "tatsu",
+    "truthfulqa",
+    "uids",
+    "vllm",
     "xelatex"
   ],
 }
