@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-import json
 import logging
 from argparse import ArgumentParser, Namespace
 from math import exp
@@ -16,7 +15,8 @@ from vllm import LLM, SamplingParams
 from vllm.inputs import TokensPrompt
 from vllm.lora.request import LoRARequest
 
-from common import EXTRACTABLE_LABELS, MANIFEST_NAME, Row, build_version, sha256_file
+from common import EXTRACTABLE_LABELS, Row, build_version
+from corpus import Corpus
 from ifeval import instructions_registry
 
 SCRIPT = Path(__file__).resolve()
@@ -35,27 +35,6 @@ def subsample(rows: list[Row], limit: int | None) -> list[Row]:
   rows = list(rows)
   Random(SUBSAMPLE_SEED).shuffle(rows)
   return rows[:limit]
-
-
-class Corpus:
-  def __init__(self, run: Any, alias: str) -> None:
-    self.run, self.alias = run, alias
-    manifest_dir = Path(run.use_artifact(f"manifest:{alias}", type="manifest").download())
-    self.manifest = json.loads((manifest_dir / MANIFEST_NAME).read_text())
-    log.info(f"corpus: manifest:{alias} built from {self.manifest['build_version']['git_commit'][:12]}")
-
-  def split(self, name: str) -> list[Row]:
-    artifact = self.run.use_artifact(f"{name}:{self.alias}", type="dataset")
-    path = Path(artifact.download()) / f"{name}.json"
-
-    expected = self.manifest["splits"][name]["sha256"]
-    actual = sha256_file(path)
-    if actual != expected:
-      raise RuntimeError(f"{name}: artifact sha256 {actual} does not match the manifest's {expected}")
-
-    rows: list[Row] = json.loads(path.read_text())
-    log.info(f"corpus: {name} {len(rows)} rows, sha256 verified against the manifest")
-    return rows
 
 
 def normalize(text: str) -> str:

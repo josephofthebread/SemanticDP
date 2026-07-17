@@ -11,6 +11,7 @@
   "cSpell.words": [
     "absl",
     "Dudich",
+    "finalizer",
     "ifeval",
     "ipynb",
     "isort",
@@ -19,6 +20,7 @@
     "nltk",
     "punkt",
     "pyproject",
+    "stanfordnlp",
     "tatsu",
     "truthfulqa",
     "uids",

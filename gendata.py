@@ -12,7 +12,7 @@ import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 
-from common import EXTRACTABLE_LABELS, MANIFEST_PATH, Row, Span, build_version, sha256_file
+from common import DATA_MANIFEST, EXTRACTABLE_LABELS, Row, Span, build_version, sha256_file
 
 SCRIPT = Path(__file__).resolve()
 
@@ -232,13 +232,14 @@ def main(args: Namespace) -> None:
       artifacts.append(artifact)
 
     manifest = {"build_version": version, "config": config, "splits": entries}
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    log.info(f"wrote {MANIFEST_PATH}")
+    DATA_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    DATA_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    log.info(f"wrote {DATA_MANIFEST}")
 
     index = wandb.Artifact(
       name="manifest", type="manifest", description="Hashes and build version of every split.", metadata=manifest
     )
-    index.add_file(str(MANIFEST_PATH))
+    index.add_file(str(DATA_MANIFEST))
 
     for artifact in [*artifacts, index]:
       run.log_artifact(artifact)

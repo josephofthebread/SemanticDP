@@ -21,6 +21,12 @@ Data description:
 | `nemotron_leak` | 375 | -- | training records, re-used closed-book for the leakage probe |
 | `alpaca_train` | 16,384 | 0.00 | entity-poor contrast (for H3) |
 
+## Embeddings
+Use `./glove.py` to pin the GloVe vectors used by the M2 (TEM) sanitizer (fetched from the official `stanfordnlp/glove` mirror) as a wandb artifact and record their hash in `_manifest/glove.json`:
+```bash
+./glove.py --help
+```
+
 ## Evaluation
 Use `./evaluate.py` (requires `vLLM`):
 ```bash

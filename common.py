@@ -5,8 +5,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 
-MANIFEST_NAME = "_manifest.json"
-MANIFEST_PATH = ROOT / MANIFEST_NAME
+MANIFEST_DIR = ROOT / "_manifest"
+DATA_MANIFEST = MANIFEST_DIR / "data.json"
+GLOVE_MANIFEST = MANIFEST_DIR / "glove.json"
 
 Row = dict[str, Any]
 Span = dict[str, Any]
