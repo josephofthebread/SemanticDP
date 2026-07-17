@@ -5,6 +5,7 @@ Copyright (c) 2026 The Project Authors. Licensed after MIT license.
 ## Generic information
 - Most recent version of research proposal: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip).
 - Most recent version of pre-defense presentation: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/pres.zip).
+- Most recent version of the paper: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/paper.zip).
 - Wandb (experiments): <https://wandb.ai/josephofthebread/SemanticDP/overview>.
 
 ## Data generation

@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        directory: [proposal, pres]
+        directory: [proposal, pres, paper]
 
     steps:
       - name: Check out the repository

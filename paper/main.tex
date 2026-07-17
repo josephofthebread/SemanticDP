@@ -1,0 +1,45 @@
+% Packages & Document Configurations
+\documentclass[twocolumn]{style}
+\runninghead{SMILES Summer School Projects Proceedings}
+\footertext{\textit{SMILES} 2025}
+%\usepackage[numbers, sort&compress]{natbib}
+
+% Title
+\title{Does Privacy Distort Alignment? Decomposing the Effects of Differential Privacy on LLM Hallucination and Misalignment}
+\logo{smiles.png}
+
+% Authors
+\author{ Fang Liu\textsuperscript{1}
+\quad Dmitry Scherbakov\textsuperscript{2}
+}
+
+% Affiliations
+\date{
+\textsuperscript{\textbf{1}}
+Applied and Computational Mathematics and Statistics \\
+University of Notre Dame, USA
+\\[0.3em]
+\textsuperscript{\textbf{2}}
+Applied Mathematics and Cybernetics \\
+Moscow State University, Russia
+}
+
+% Abstract
+
+\begin{document}
+\twocolumn[\maketitle]
+\small
+\begin{abstract}
+  \noindent We study how differentially private  (DP) mechanisms affect the utility and safety alignment of  language models (LMs). We decompose privacy effects into multiple pathways: direct changes to training or generation behavior, measurable semantic distortion of task-relevant content, and downstream alignment degradation. In a controlled setting using small open-weight LMs, public alignment datasets, and lightweight fine-tuning or inference-time perturbation methods, we evaluate whether semantic distortion explains alignment failures beyond what is predicted by privacy budget alone.  We compare several privacy mechanisms, including random token perturbation, semantic text sanitization, and DP-compatible fine-tuning, across tasks measuring truthfulness, hallucination, safety behavior, refusal accuracy, helpfulness, and instruction following. Our central question is when, and to what extent, semantic distortion accounts for DP-induced degradation relative to alternative mechanisms such as optimization instability, calibration shifts, or regularization effects. The study produces privacy-alignment-utility curves and a compact evaluation framework for analyzing how privacy mechanisms affect both semantic fidelity and behavioral alignment. These results aim to clarify which forms of privacy noise are most damaging to aligned LM behavior and to inform mitigation strategies for preserving alignment under stronger privacy constraints.
+\end{abstract}
+
+\noindent\small{\textbf{Index Terms:} AI safety,  Alignment, Differential Privacy, LLM, Utility}
+
+\input{sec/01-Introduction}
+\input{sec/02-Background}
+\input{sec/03-Methods}
+\input{sec/04-Results}
+\input{sec/05-Conclusion}
+
+\printbibliography
+\end{document}
