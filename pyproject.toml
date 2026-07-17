@@ -17,6 +17,7 @@ dependencies = [
   "absl-py>=2.5.0",
   "nltk>=3.10.0",
   "transformers>=5.13.1",
+  "pip>=26.1.2",
 ]
 
 [tool.ruff]
