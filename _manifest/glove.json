@@ -8,9 +8,8 @@
     "sha256": "a12599d41e3589c7160be27fffe5b0080eccd0f0c75f46666c59f90188093c40",
     "vocab_size": 400001
   },
-  "build_version": {
-    "git_commit": "0f49d8960670a19cfb11bdd59cb38a13eef0e87b",
-    "git_dirty": true,
-    "script_sha256": "690c86e200f1dedb70243526666b7aab16d17d0e2bfe8fa3df1b306d6fcc524a"
+  "versions": {
+    "git_commit": "9e05dd21ac05a56826716f36a8e1e70e1637cfa1",
+    "git_dirty": true
   }
 }

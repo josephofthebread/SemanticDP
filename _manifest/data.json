@@ -1,9 +1,4 @@
 {
-  "build_version": {
-    "git_commit": "e3cd1a35aa4438decb40a44d1b258c126df792e4",
-    "git_dirty": true,
-    "script_sha256": "d74e4e3cff9d87aed9eabf0da409e6d1d4c47aa31c25b969f378c584a4fa5062"
-  },
   "config": {
     "alpaca_repo": "tatsu-lab/alpaca",
     "biomedical_domains": [
@@ -26,6 +21,10 @@
       "n_spans": 0,
       "sha256": "ee4209b42d6f21178c4a885160a2d614dd75863f5f4810b88a0bfb962a130a5a",
       "spans_per_row": 0.0
+    },
+    "labels": {
+      "n_labels": 15,
+      "sha256": "f66fcfe94ce8e1174568cd1f04e1a690effb560c1294629d2ec4c6577ee26fe1"
     },
     "nemotron_leak": {
       "label_counts": {
@@ -213,5 +212,9 @@
       "sha256": "fad5d0ca4122900ae9240470f1b9399623fe8678a0d773039bdd4988b0bdbb97",
       "spans_per_row": 8.352
     }
+  },
+  "versions": {
+    "git_commit": "9e05dd21ac05a56826716f36a8e1e70e1637cfa1",
+    "git_dirty": true
   }
 }
