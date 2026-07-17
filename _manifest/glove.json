@@ -1,0 +1,16 @@
+{
+  "asset": {
+    "dim": 300,
+    "file": "glove.6B.zip",
+    "member": "glove.6B.300d.txt",
+    "repo_id": "stanfordnlp/glove",
+    "revision": "1db2080b2d94def6e5b0386a523102f9d8849e9d",
+    "sha256": "a12599d41e3589c7160be27fffe5b0080eccd0f0c75f46666c59f90188093c40",
+    "vocab_size": 400001
+  },
+  "build_version": {
+    "git_commit": "0f49d8960670a19cfb11bdd59cb38a13eef0e87b",
+    "git_dirty": true,
+    "script_sha256": "690c86e200f1dedb70243526666b7aab16d17d0e2bfe8fa3df1b306d6fcc524a"
+  }
+}
