@@ -20,6 +20,8 @@ dependencies = [
   "huggingface-hub>=0.30.0",
   "pip>=26.1.2",
   "numpy>=2.3.5",
+  "peft>=0.19.1",
+  "opacus>=1.6.0",
 ]
 
 [tool.ruff]

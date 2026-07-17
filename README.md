@@ -30,7 +30,15 @@ Use `./genglove.py` to pin the GloVe vectors used by the M2 (TEM) sanitizer (fet
 ## Perturbation
 Use `./perturb.py` to build the M1 and M2 (see the [proposal](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip)) altered datasets:
 ```bash
-./perturb.py --help
+./perturb.py --splits nemotron_train,alpaca_train --m1 0.05,0.15,0.30,0.50 --m2 1,3,6,12
+```
+
+## Training
+Use `./train.py` to LoRA fine-tune one model on one corpus split, producing an adapter logged to wandb. M0/M1/M2 differ only in the `--split` consumed; M3 adds DP-SGD when `--target-epsilon` is set (requires `torch` + `peft`, a CUDA GPU):
+```bash
+./train.py --model Qwen/Qwen3-1.7B --split nemotron_train                     # M0 (clean)
+./train.py --model Qwen/Qwen3-1.7B --split nemotron_train_m2_eps3             # M2
+./train.py --model Qwen/Qwen3-1.7B --split nemotron_train --target-epsilon 8  # M3 (DP-SGD)
 ```
 
 ## Evaluation
