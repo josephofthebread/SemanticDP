@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+import json
 import logging
 from argparse import ArgumentParser, Namespace
 from math import exp
@@ -14,26 +15,20 @@ from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.inputs import TokensPrompt
 from vllm.lora.request import LoRARequest
+from wandb.sdk.wandb_run import Run
 
-from common import EXTRACTABLE_LABELS, Row, build_version
-from corpus import Corpus
+from common import versions
 from ifeval import instructions_registry
-
-SCRIPT = Path(__file__).resolve()
+from splits import DATA_MANIFEST, fetch
 
 log = logging.getLogger("evaluate")
 
-TRUTHFULQA_REPO = "truthfulqa/truthful_qa"
-IFEVAL_REPO = "google/IFEval"
 
-SUBSAMPLE_SEED = 0
-
-
-def subsample(rows: list[Row], limit: int | None) -> list[Row]:
+def subsample(rows: list[dict[str, Any]], limit: int | None, seed: int) -> list[dict[str, Any]]:
   if limit is None or limit >= len(rows):
     return rows
   rows = list(rows)
-  Random(SUBSAMPLE_SEED).shuffle(rows)
+  Random(seed).shuffle(rows)
   return rows[:limit]
 
 
@@ -101,8 +96,8 @@ class Model:
     return scores
 
 
-def eval_truthfulqa(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(TRUTHFULQA_REPO, "multiple_choice", split="validation")), limit)
+def eval_truthfulqa(model: Model, repo: str, limit: int | None, seed: int) -> dict[str, Any]:
+  rows = subsample(list(load_dataset(repo, "multiple_choice", split="validation")), limit, seed)
   log.info(f"truthfulqa: {len(rows)} questions")
 
   contexts = [row["question"] for row in rows]
@@ -128,8 +123,8 @@ def eval_truthfulqa(model: Model, _: Corpus, limit: int | None) -> dict[str, Any
   }
 
 
-def eval_ifeval(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(IFEVAL_REPO, split="train")), limit)
+def eval_ifeval(model: Model, repo: str, limit: int | None, seed: int) -> dict[str, Any]:
+  rows = subsample(list(load_dataset(repo, split="train")), limit, seed)
   log.info(f"ifeval: {len(rows)} prompts")
 
   responses = model.generate([row["prompt"] for row in rows])
@@ -157,18 +152,19 @@ def eval_ifeval(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
   }
 
 
-def eval_entity_fidelity(model: Model, corpus: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(corpus.split("nemotron_probe"), limit)
+def eval_entity_fidelity(model: Model, run: Run, data: dict[str, Any], limit: int | None, seed: int) -> dict[str, Any]:
+  labels_map = fetch(run, "labels", data["labels"]["sha256"])
+  rows = subsample(fetch(run, "nemotron_probe", data["nemotron_probe"]["sha256"]), limit, seed)
 
   asked, golds, texts = [], [], []
   for row in rows:
-    rng = Random(f"{SUBSAMPLE_SEED}-{row['example_id']}")
-    labels = sorted({span["label"] for span in row["spans"]} & EXTRACTABLE_LABELS.keys())
+    rng = Random(f"{seed}-{row['example_id']}")
+    labels = sorted({span["label"] for span in row["spans"]} & labels_map.keys())
     if not labels:
       continue
     label = rng.choice(labels)
     values = list(dict.fromkeys(span["text"] for span in row["spans"] if span["label"] == label))
-    asked.append(f"Extract the {EXTRACTABLE_LABELS[label]} from the following record.\n\n{row['text']}")
+    asked.append(f"Extract the {labels_map[label]} from the following record.\n\n{row['text']}")
     golds.append(values)
     texts.append(row["text"])
   log.info(f"entity_fidelity: {len(asked)} held-out records")
@@ -197,8 +193,8 @@ def eval_entity_fidelity(model: Model, corpus: Corpus, limit: int | None) -> dic
   }
 
 
-def eval_entity_leakage(model: Model, corpus: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(corpus.split("nemotron_leak"), limit)
+def eval_entity_leakage(model: Model, run: Run, data: dict[str, Any], limit: int | None, seed: int) -> dict[str, Any]:
+  rows = subsample(fetch(run, "nemotron_leak", data["nemotron_leak"]["sha256"]), limit, seed)
 
   asked, golds = [], []
   for row in rows:
@@ -230,12 +226,7 @@ def eval_entity_leakage(model: Model, corpus: Corpus, limit: int | None) -> dict
   }
 
 
-TASKS = {
-  "truthfulqa": eval_truthfulqa,
-  "ifeval": eval_ifeval,
-  "entity_fidelity": eval_entity_fidelity,
-  "entity_leakage": eval_entity_leakage,
-}
+TASKS = ["truthfulqa", "ifeval", "entity_fidelity", "entity_leakage"]
 
 
 def main(args: Namespace) -> None:
@@ -254,9 +245,10 @@ def main(args: Namespace) -> None:
     "limit": args.limit,
     "max_tokens": args.max_tokens,
     "tasks": args.tasks,
-    "corpus_alias": args.corpus,
-    **build_version(SCRIPT),
+    "subsample_seed": args.subsample_seed,
+    **versions(),
   }
+  data = json.loads(DATA_MANIFEST.read_text())["splits"]
   # The engine is built before wandb.init(). vLLM forks an EngineCore child, and
   # a child forked from a process with a live wandb run inherits its threads and
   # service connection: a wandb weakref finalizer then fires inside the child and
@@ -265,9 +257,13 @@ def main(args: Namespace) -> None:
   model = Model(args)
 
   with wandb.init(job_type="evaluate", name=args.run, config=config) as run:
-    corpus = Corpus(run, args.corpus)
-
-    metrics = {name: TASKS[name](model, corpus, args.limit) for name in args.tasks}
+    tasks = {
+      "truthfulqa": lambda: eval_truthfulqa(model, args.truthfulqa_repo, args.limit, args.subsample_seed),
+      "ifeval": lambda: eval_ifeval(model, args.ifeval_repo, args.limit, args.subsample_seed),
+      "entity_fidelity": lambda: eval_entity_fidelity(model, run, data, args.limit, args.subsample_seed),
+      "entity_leakage": lambda: eval_entity_leakage(model, run, data, args.limit, args.subsample_seed),
+    }
+    metrics = {name: tasks[name]() for name in args.tasks}
     for name, values in metrics.items():
       log.info(f"{name}: {values}")
       for key, value in values.items():
@@ -282,10 +278,12 @@ if __name__ == "__main__":
   parser.add_argument("--model", required=True, help="base model, a HuggingFace id or local path")
   parser.add_argument("--lora", type=Path, default=None, help="LoRA adapter directory; omit for the untuned model")
   parser.add_argument("--run", required=True, help="name for this run in wandb")
-  parser.add_argument("--corpus", default="latest", help="alias of the gendata artifacts to evaluate against")
   parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
   parser.add_argument("--limit", type=int, default=None, help="evaluate only N items per task (smoke test)")
   parser.add_argument("--seed", type=int, default=0)
+  parser.add_argument("--subsample-seed", type=int, default=0, help="seed for per-task subsampling under --limit")
+  parser.add_argument("--truthfulqa-repo", default="truthfulqa/truthful_qa", help="Hugging Face repo for TruthfulQA")
+  parser.add_argument("--ifeval-repo", default="google/IFEval", help="Hugging Face repo for IFEval")
   parser.add_argument("--max-tokens", type=int, default=768)
   parser.add_argument("--max-model-len", type=int, default=4096)
   parser.add_argument("--dtype", default="auto", choices=["auto", "half", "bfloat16", "float32"])

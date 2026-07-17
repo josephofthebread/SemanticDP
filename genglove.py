@@ -10,9 +10,8 @@ import wandb
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 
-from common import GLOVE_MANIFEST, build_version, sha256_file
-
-SCRIPT = Path(__file__).resolve()
+from common import sha256file, versions
+from splits import GLOVE_MANIFEST
 
 log = logging.getLogger("glove")
 
@@ -20,7 +19,7 @@ log = logging.getLogger("glove")
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  version = build_version(SCRIPT)
+  version = versions()
   config = {"repo_id": args.repo, "revision": args.revision, "file": args.file, "member": args.member}
 
   with wandb.init(job_type="glove", config={**config, **version}) as run, TemporaryDirectory() as tmp:
@@ -30,7 +29,7 @@ def main(args: Namespace) -> None:
       bundle.extract(args.member, tmp)
     vectors = Path(tmp) / args.member
 
-    digest = sha256_file(vectors)
+    digest = sha256file(vectors)
     lines = vectors.read_text().splitlines()
     vocab_size, dim = len(lines), len(lines[0].split()) - 1
     log.info(f"{args.member}: {vocab_size} tokens, dim {dim}, sha256 {digest[:12]}")
@@ -45,7 +44,7 @@ def main(args: Namespace) -> None:
     artifact.add_file(str(vectors))
 
     GLOVE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {"build_version": version, "asset": metadata}
+    manifest = {"versions": version, "asset": metadata}
     GLOVE_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     log.info(f"wrote {GLOVE_MANIFEST}")
 

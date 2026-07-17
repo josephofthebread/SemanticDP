@@ -19,6 +19,7 @@ dependencies = [
   "transformers>=5.13.1",
   "huggingface-hub>=0.30.0",
   "pip>=26.1.2",
+  "numpy>=2.3.5",
 ]
 
 [tool.ruff]

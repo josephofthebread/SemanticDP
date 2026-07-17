@@ -11,7 +11,7 @@ Copyright (c) 2026 The Project Authors. Licensed after MIT license.
 ## Data generation
 Use `./gendata.py`:
 ```bash
-./gendata.py --help
+./gendata.py
 ```
 Data description:
 | Split | Rows | Spans/row | Role |
@@ -22,9 +22,15 @@ Data description:
 | `alpaca_train` | 16,384 | 0.00 | entity-poor contrast (for H3) |
 
 ## Embeddings
-Use `./glove.py` to pin the GloVe vectors used by the M2 (TEM) sanitizer (fetched from the official `stanfordnlp/glove` mirror) as a wandb artifact and record their hash in `_manifest/glove.json`:
+Use `./genglove.py` to pin the GloVe vectors used by the M2 (TEM) sanitizer (fetched from the official `stanfordnlp/glove` mirror) as a wandb artifact and record their hash in `_manifest/glove.json`:
 ```bash
-./glove.py --help
+./genglove.py
+```
+
+## Perturbation
+Use `./perturb.py` to build the M1 and M2 (see the [proposal](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip)) altered datasets:
+```bash
+./perturb.py --help
 ```
 
 ## Evaluation

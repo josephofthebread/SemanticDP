@@ -12,14 +12,28 @@ import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 
-from common import DATA_MANIFEST, EXTRACTABLE_LABELS, Row, Span, build_version, sha256_file
-
-SCRIPT = Path(__file__).resolve()
+from common import versions
+from splits import DATA_MANIFEST, stage
 
 log = logging.getLogger("gendata")
 
-NEMOTRON_REPO = "nvidia/Nemotron-PII"
-ALPACA_REPO = "tatsu-lab/alpaca"
+EXTRACTABLE_LABELS = {
+  "first_name": "patient's first name",
+  "last_name": "patient's last name",
+  "date_of_birth": "date of birth",
+  "medical_record_number": "medical record number",
+  "health_plan_beneficiary_number": "health plan beneficiary number",
+  "phone_number": "phone number",
+  "email": "email address",
+  "date": "date",
+  "time": "time",
+  "age": "age",
+  "street_address": "street address",
+  "employee_id": "employee ID",
+  "certificate_license_number": "certificate or license number",
+  "account_number": "account number",
+  "customer_id": "customer ID",
+}
 
 BIOMEDICAL_DOMAINS = frozenset(
   {
@@ -32,12 +46,12 @@ BIOMEDICAL_DOMAINS = frozenset(
 )
 
 
-def parse_spans(row: Row) -> list[Span]:
+def parse_spans(row: dict[str, Any]) -> list[dict[str, Any]]:
   text = row["text"]
   spans = row.get("spans", "[]")
   if isinstance(spans, str):
     spans = literal_eval(spans)
-  parsed: list[Span] = []
+  parsed: list[dict[str, Any]] = []
   for span in spans:
     gold = str(span["text"])
     surface = text[span["start"] : span["end"]]
@@ -45,7 +59,7 @@ def parse_spans(row: Row) -> list[Span]:
   return parsed
 
 
-def template_extract(row: Row, rng: Random) -> Row | None:
+def template_extract(row: dict[str, Any], rng: Random) -> dict[str, Any] | None:
   candidates = sorted({span["label"] for span in row["spans"]} & EXTRACTABLE_LABELS.keys())
   if not candidates:
     return None
@@ -61,7 +75,7 @@ def template_extract(row: Row, rng: Random) -> Row | None:
   }
 
 
-def template_draft(row: Row, _: Random) -> Row | None:
+def template_draft(row: dict[str, Any], _: Random) -> dict[str, Any] | None:
   return {
     "instruction": f"Draft a {row['document_type']} for the {row['domain']} domain.",
     "input": row["document_description"],
@@ -72,7 +86,7 @@ def template_draft(row: Row, _: Random) -> Row | None:
   }
 
 
-def template_classify(row: Row, _: Random) -> Row | None:
+def template_classify(row: dict[str, Any], _: Random) -> dict[str, Any] | None:
   return {
     "instruction": "Identify the document type of the following record.",
     "input": row["text"],
@@ -86,7 +100,7 @@ def template_classify(row: Row, _: Random) -> Row | None:
 TEMPLATES = [template_extract, template_draft, template_classify]
 
 
-def instructionize(row: Row, rng: Random) -> Row | None:
+def instructionize(row: dict[str, Any], rng: Random) -> dict[str, Any] | None:
   for template in rng.sample(TEMPLATES, len(TEMPLATES)):
     example = template(row, rng)
     if example is not None:
@@ -97,7 +111,7 @@ def instructionize(row: Row, rng: Random) -> Row | None:
   return None
 
 
-def record(row: Row, example_id: str) -> Row:
+def record(row: dict[str, Any], example_id: str) -> dict[str, Any]:
   """A Nemotron document in record form, for the probes that score gold spans."""
   return {
     "example_id": example_id,
@@ -109,8 +123,8 @@ def record(row: Row, example_id: str) -> Row:
   }
 
 
-def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
-  dataset = load_dataset(NEMOTRON_REPO)
+def build_nemotron(args: Namespace) -> dict[str, list[dict[str, Any]]]:
+  dataset = load_dataset(args.nemotron_repo)
   rows = [row for split in dataset for row in dataset[split]]
   log.info(f"nemotron: {len(rows)} rows scanned")
 
@@ -120,7 +134,7 @@ def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   curated = [{**row, "spans": spans} for row in rows if (spans := parse_spans(row)) and row.get("text")]
   log.info(f"nemotron: {len(curated)} rows with at least one gold span")
 
-  groups: dict[str, list[Row]] = {}
+  groups: dict[str, list[dict[str, Any]]] = {}
   for row in curated:
     groups.setdefault(row["uid"], []).append(row)
   uids = sorted(groups)
@@ -151,8 +165,8 @@ def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   return {"nemotron_train": train, "nemotron_probe": probe, "nemotron_leak": leak}
 
 
-def build_alpaca(args: Namespace) -> dict[str, list[Row]]:
-  rows = list(load_dataset(ALPACA_REPO, split="train"))
+def build_alpaca(args: Namespace) -> dict[str, list[dict[str, Any]]]:
+  rows = list(load_dataset(args.alpaca_repo, split="train"))
   log.info(f"alpaca: {len(rows)} rows scanned")
 
   rows = [row for row in rows if row["instruction"].strip() and row["output"].strip()]
@@ -179,7 +193,7 @@ def build_alpaca(args: Namespace) -> dict[str, list[Row]]:
   return {"alpaca_train": train}
 
 
-def entity_stats(rows: list[Row]) -> dict[str, Any]:
+def entity_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
   counts: dict[str, int] = {}
   for row in rows:
     for span in row["spans"]:
@@ -202,10 +216,10 @@ def main(args: Namespace) -> None:
     "probe_n": args.probe_n,
     "leak_n": args.leak_n,
     "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
-    "nemotron_repo": NEMOTRON_REPO,
-    "alpaca_repo": ALPACA_REPO,
+    "nemotron_repo": args.nemotron_repo,
+    "alpaca_repo": args.alpaca_repo,
   }
-  version = build_version(SCRIPT)
+  version = versions()
 
   with wandb.init(job_type="gendata", config={**config, **version}) as run, TemporaryDirectory() as staging:
     splits = {**build_nemotron(args), **build_alpaca(args)}
@@ -217,21 +231,17 @@ def main(args: Namespace) -> None:
     entries: dict[str, Any] = {}
     artifacts = []
     for name, rows in splits.items():
-      path = Path(staging) / f"{name}.json"
-      path.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
-      entries[name] = {"sha256": sha256_file(path), **entity_stats(rows)}
+      artifact, entries[name] = stage(name, rows, Path(staging), entity_stats(rows))
+      artifacts.append(artifact)
       log.info(f"staged {name}: {entries[name]['n_rows']} rows, sha256 {entries[name]['sha256'][:12]}")
 
-      artifact = wandb.Artifact(
-        name=name,
-        type="dataset",
-        description=f"Frozen {name} split for the privacy-mechanism grid.",
-        metadata=entries[name],
-      )
-      artifact.add_file(str(path))
-      artifacts.append(artifact)
+    labels_artifact, entries["labels"] = stage(
+      "labels", EXTRACTABLE_LABELS, Path(staging), {"n_labels": len(EXTRACTABLE_LABELS)}
+    )
+    artifacts.append(labels_artifact)
+    log.info(f"staged labels: {len(EXTRACTABLE_LABELS)} labels, sha256 {entries['labels']['sha256'][:12]}")
 
-    manifest = {"build_version": version, "config": config, "splits": entries}
+    manifest = {"versions": version, "config": config, "splits": entries}
     DATA_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     DATA_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     log.info(f"wrote {DATA_MANIFEST}")
@@ -250,6 +260,8 @@ if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
   parser = ArgumentParser(description="Build the frozen adaptation corpora for the privacy-mechanism grid.")
   parser.add_argument("--seed", type=int, default=0)
+  parser.add_argument("--nemotron-repo", default="nvidia/Nemotron-PII", help="Hugging Face repo for the PII corpus")
+  parser.add_argument("--alpaca-repo", default="tatsu-lab/alpaca", help="Hugging Face repo for the generic corpus")
   parser.add_argument("--train-n", type=int, default=16384, help="train rows per corpus")
   parser.add_argument("--probe-n", type=int, default=375, help="held-out entity-fidelity probe records")
   parser.add_argument(

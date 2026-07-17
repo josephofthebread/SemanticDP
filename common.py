@@ -3,36 +3,8 @@ from pathlib import Path
 from subprocess import check_output
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
 
-MANIFEST_DIR = ROOT / "_manifest"
-DATA_MANIFEST = MANIFEST_DIR / "data.json"
-GLOVE_MANIFEST = MANIFEST_DIR / "glove.json"
-
-Row = dict[str, Any]
-Span = dict[str, Any]
-
-
-EXTRACTABLE_LABELS = {
-  "first_name": "patient's first name",
-  "last_name": "patient's last name",
-  "date_of_birth": "date of birth",
-  "medical_record_number": "medical record number",
-  "health_plan_beneficiary_number": "health plan beneficiary number",
-  "phone_number": "phone number",
-  "email": "email address",
-  "date": "date",
-  "time": "time",
-  "age": "age",
-  "street_address": "street address",
-  "employee_id": "employee ID",
-  "certificate_license_number": "certificate or license number",
-  "account_number": "account number",
-  "customer_id": "customer ID",
-}
-
-
-def sha256_file(path: Path) -> str:
+def sha256file(path: Path) -> str:
   digest = sha256()
   with path.open("rb") as handle:
     for chunk in iter(lambda: handle.read(1 << 20), b""):
@@ -40,13 +12,9 @@ def sha256_file(path: Path) -> str:
   return digest.hexdigest()
 
 
-def git(*command: str) -> str:
-  return check_output(["git", *command], cwd=ROOT, text=True).strip()
-
-
-def build_version(script: Path) -> dict[str, Any]:
+def versions() -> dict[str, Any]:
+  git = lambda *command: check_output(["git", *command], text=True).strip()
   return {
-    "script_sha256": sha256_file(script),
     "git_commit": git("rev-parse", "HEAD"),
     "git_dirty": bool(git("status", "--porcelain")),
   }
