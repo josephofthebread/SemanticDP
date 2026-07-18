@@ -12,7 +12,6 @@ import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 
-from common import versions
 from splits import DATA_MANIFEST, stage
 
 log = logging.getLogger("gendata")
@@ -219,9 +218,7 @@ def main(args: Namespace) -> None:
     "nemotron_repo": args.nemotron_repo,
     "alpaca_repo": args.alpaca_repo,
   }
-  version = versions()
-
-  with wandb.init(job_type="gendata", config={**config, **version}) as run, TemporaryDirectory() as staging:
+  with wandb.init(job_type="gendata", config=config) as run, TemporaryDirectory() as staging:
     splits = {**build_nemotron(args), **build_alpaca(args)}
 
     train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
@@ -241,7 +238,7 @@ def main(args: Namespace) -> None:
     artifacts.append(labels_artifact)
     log.info(f"staged labels: {len(EXTRACTABLE_LABELS)} labels, sha256 {entries['labels']['sha256'][:12]}")
 
-    manifest = {"versions": version, "config": config, "splits": entries}
+    manifest = {"config": config, "splits": entries}
     DATA_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     DATA_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     log.info(f"wrote {DATA_MANIFEST}")

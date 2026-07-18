@@ -17,7 +17,6 @@ from vllm.inputs import TokensPrompt
 from vllm.lora.request import LoRARequest
 from wandb.sdk.wandb_run import Run
 
-from common import versions
 from ifeval import instructions_registry
 from splits import DATA_MANIFEST, fetch
 
@@ -246,7 +245,6 @@ def main(args: Namespace) -> None:
     "max_tokens": args.max_tokens,
     "tasks": args.tasks,
     "subsample_seed": args.subsample_seed,
-    **versions(),
   }
   data = json.loads(DATA_MANIFEST.read_text())["splits"]
   # The engine is built before wandb.init(). vLLM forks an EngineCore child, and

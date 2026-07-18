@@ -15,8 +15,7 @@ import numpy as np
 import wandb
 from dotenv import load_dotenv
 
-from common import sha256file, versions
-from splits import DATA_MANIFEST, GLOVE_MANIFEST, PERTURB_MANIFEST, fetch, stage
+from splits import DATA_MANIFEST, GLOVE_MANIFEST, PERTURB_MANIFEST, fetch, sha256file, stage
 
 log = logging.getLogger("perturb")
 
@@ -79,14 +78,13 @@ class Tem:
 
 def main(args: Namespace) -> None:
   load_dotenv()
-  version = versions()
 
   data = json.loads(DATA_MANIFEST.read_text())["splits"]
   glove_asset = json.loads(GLOVE_MANIFEST.read_text())["asset"]
   levels = {"m1": args.m1, "m2": args.m2}
   config = {"seed": args.seed, "splits": args.splits, "levels": levels, "gamma": args.gamma}
 
-  with wandb.init(job_type="perturb", config={**config, **version}) as run, TemporaryDirectory() as tmp:
+  with wandb.init(job_type="perturb", config=config) as run, TemporaryDirectory() as tmp:
     staging = Path(tmp)
     base = {split: fetch(run, split, data[split]["sha256"]) for split in args.splits}
 
@@ -121,7 +119,7 @@ def main(args: Namespace) -> None:
       artifacts.append(artifact)
       log.info(f"staged {name}: {len(perturbed)} rows, sha256 {entries[name]['sha256'][:12]}")
 
-    manifest = {"versions": version, "config": config, "splits": entries}
+    manifest = {"config": config, "splits": entries}
     PERTURB_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     PERTURB_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     log.info(f"wrote {PERTURB_MANIFEST}")

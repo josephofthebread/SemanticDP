@@ -19,7 +19,6 @@ from torch.nn.functional import cross_entropy
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from wandb.sdk.wandb_run import Run
 
-from common import versions
 from splits import DATA_MANIFEST, PERTURB_MANIFEST, fetch
 
 log = logging.getLogger("train")
@@ -145,7 +144,7 @@ def main(args: Namespace) -> None:
     "dtype": args.dtype,
   }
 
-  with wandb.init(job_type="train", config={**config, **versions()}) as run, TemporaryDirectory() as tmp:
+  with wandb.init(job_type="train", config=config) as run, TemporaryDirectory() as tmp:
     rows = fetch(run, args.split, splits[args.split]["sha256"])
     log.info(f"{args.split}: {len(rows)} rows")
 

@@ -1,16 +1,23 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 import wandb
 from wandb.sdk.wandb_run import Run
 
-from common import sha256file
-
 MANIFEST_DIR = Path("_manifest")
 DATA_MANIFEST = MANIFEST_DIR / "data.json"
 GLOVE_MANIFEST = MANIFEST_DIR / "glove.json"
 PERTURB_MANIFEST = MANIFEST_DIR / "perturb.json"
+
+
+def sha256file(path: Path) -> str:
+  digest = sha256()
+  with path.open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1 << 20), b""):
+      digest.update(chunk)
+  return digest.hexdigest()
 
 
 def fetch(run: Run, name: str, sha256: str) -> Any:

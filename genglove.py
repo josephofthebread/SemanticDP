@@ -10,8 +10,7 @@ import wandb
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 
-from common import sha256file, versions
-from splits import GLOVE_MANIFEST
+from splits import GLOVE_MANIFEST, sha256file
 
 log = logging.getLogger("glove")
 
@@ -19,10 +18,9 @@ log = logging.getLogger("glove")
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  version = versions()
   config = {"repo_id": args.repo, "revision": args.revision, "file": args.file, "member": args.member}
 
-  with wandb.init(job_type="glove", config={**config, **version}) as run, TemporaryDirectory() as tmp:
+  with wandb.init(job_type="glove", config=config) as run, TemporaryDirectory() as tmp:
     archive = hf_hub_download(repo_id=args.repo, filename=args.file, revision=args.revision, cache_dir=tmp)
     log.info(f"extracting {args.member}")
     with ZipFile(archive) as bundle:
@@ -44,7 +42,7 @@ def main(args: Namespace) -> None:
     artifact.add_file(str(vectors))
 
     GLOVE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {"versions": version, "asset": metadata}
+    manifest = {"asset": metadata}
     GLOVE_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     log.info(f"wrote {GLOVE_MANIFEST}")
 
