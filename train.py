@@ -45,12 +45,13 @@ def collate(batch: list[tuple[list[int], list[int]]], pad_id: int, device: Any) 
   return tensor(input_ids), tensor(labels), tensor(mask)
 
 
-def clip_into(params: dict[str, Any], summed: dict[str, Any], clip: float) -> None:
-  """Clip the gradient sitting on `params` to L2 norm `clip` and add it into `summed`, in fp32."""
+def clip_into(params: dict[str, Any], summed: dict[str, Any], clip: float) -> float:
+  """Clip the gradient sitting on `params` to L2 norm `clip`, add it into `summed` in fp32, return its pre-clip norm."""
   norm = torch.sqrt(sum((p.grad.float() ** 2).sum() for p in params.values()))
   factor = (clip / (norm + 1e-6)).clamp(max=1.0)
   for name, p in params.items():
     summed[name] += p.grad.float() * factor
+  return float(norm)
 
 
 def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]], run: Run) -> None:
@@ -87,10 +88,11 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
     run.summary["dp/sigma"], run.summary["dp/epsilon"] = sigma, realized
 
     params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+    dimension = sum(p.numel() for p in params.values())
     generator = torch.Generator(device=device).manual_seed(args.seed)
 
   rng = random.Random(args.seed)
-  step = 0
+  step, tokens = 0, 0
   steps_per_epoch = math.ceil(len(examples) / args.batch_size)
   for epoch in range(args.epochs):
     if private:
@@ -104,25 +106,30 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
       if not lot:
         continue
       batch = [examples[i] for i in lot]
-      # Both branches report the same statistic: the loss averaged over supervised tokens, weighted
-      # by each unit's token count. Averaging per example instead would not be comparable between
-      # arms, since a draft example carries ~188 supervised tokens and an extract one ~2.
       weighted, supervised = 0.0, 0
       if private:
         summed = {name: torch.zeros_like(p, dtype=torch.float32) for name, p in params.items()}
+        norms = []
         for ids, labs in batch:
           optimizer.zero_grad(set_to_none=True)
           example = model(input_ids=torch.tensor([ids], device=device), labels=torch.tensor([labs], device=device)).loss
           example.backward()
-          clip_into(params, summed, args.max_grad_norm)
+          norms.append(clip_into(params, summed, args.max_grad_norm))
           count = sum(label != -100 for label in labs)
           weighted += float(example.detach()) * count
           supervised += count
         optimizer.zero_grad(set_to_none=True)
+        signal = float(torch.sqrt(torch.stack([(g**2).sum() for g in summed.values()]).sum()))
         for name, g in summed.items():
           noise = torch.normal(0.0, sigma * args.max_grad_norm, size=g.shape, generator=generator, device=g.device)
           params[name].grad = ((g + noise) / args.batch_size).to(params[name].dtype)
         optimizer.step()
+        extra = {
+          "train/grad_norm": sum(norms) / len(norms),
+          "train/clipped": sum(norm > args.max_grad_norm for norm in norms) / len(norms),
+          "train/snr": signal / (sigma * args.max_grad_norm * math.sqrt(dimension)),
+          "train/lot_size": len(lot),
+        }
       else:
         optimizer.zero_grad()
         chunks = [batch[start : start + args.micro_batch] for start in range(0, len(batch), args.micro_batch)]
@@ -133,14 +140,25 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
           chunk_loss = model(input_ids=input_ids, attention_mask=mask, labels=labels).loss
           (chunk_loss * count / supervised).backward()
           weighted += float(chunk_loss.detach()) * count
-        torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)
+        norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)
         optimizer.step()
+        extra = {"train/grad_norm": float(norm)}
       scheduler.step()
       step += 1
+      tokens += supervised
       value = weighted / supervised
-      run.log({"train/loss": value, "train/epoch": epoch, "train/lr": scheduler.get_last_lr()[0]})
+      run.log(
+        {
+          "train/loss": value,
+          "train/epoch": epoch,
+          "train/lr": scheduler.get_last_lr()[0],
+          "train/tokens": supervised,
+          **extra,
+        }
+      )
       if step % 20 == 0 or step == total_steps:
-        log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f}")
+        log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f} grad {extra['train/grad_norm']:.4f}")
+  run.summary["train/tokens_total"] = tokens
 
 
 def main(args: Namespace) -> None:
