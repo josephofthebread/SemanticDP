@@ -41,6 +41,8 @@ site/.swc
 $*
 .bak
 
+/pack.py
+
 # Make target for updating golden files (any dir).
 .gen-golden
 

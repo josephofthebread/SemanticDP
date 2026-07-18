@@ -45,8 +45,16 @@ else
 fi
 template=$(jq -r .job_id "$job")
 
-# A failed fork must not abort the rest: the grid is submitted once and a partial submission is
-# worse than a reported one. LIMIT caps how many cells are forked, for a first wave against quota.
+while :; do
+  datasphere project job get --id "$template" --format json -o "$job"
+  status=$(jq -r .status "$job")
+  case $status in
+    EXECUTING | SUCCESS) break ;;
+    CREATING | PREPARING) sleep 10 ;;
+    *) echo "template $template is $status" >&2 && exit 1 ;;
+  esac
+done
+
 failed=()
 for cell in "${cells[@]:1:${LIMIT:-999}}"; do
   IFS='|' read -r MODEL SPLIT SEED EXTRA <<<"$cell"

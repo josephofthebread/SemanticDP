@@ -63,7 +63,16 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
       examples.append((ids, labels))
   if len(examples) < len(rows):
     log.info(f"dropped {len(rows) - len(examples)} rows whose prompt fills max_len {args.max_len}")
-  run.summary["train/examples"], run.summary["train/dropped"] = len(examples), len(rows) - len(examples)
+
+  # Held out on a fixed seed, not --seed, so every arm and every seed holds out the same rows: the
+  # curves stay comparable, and no arm trains on another's validation data. These rows are outside
+  # the training set, so they cost no privacy budget — but that only holds while they are watched
+  # rather than selected on.
+  index = set(random.Random(0).sample(range(len(examples)), round(args.val * len(examples))))
+  held_out = [example for i, example in enumerate(examples) if i in index]
+  examples = [example for i, example in enumerate(examples) if i not in index]
+  run.summary["train/dropped"] = len(rows) - len(examples) - len(held_out)
+  run.summary["train/examples"], run.summary["val/examples"] = len(examples), len(held_out)
 
   total_steps = math.ceil(len(examples) / args.batch_size) * args.epochs
   optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
@@ -158,6 +167,20 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
       )
       if step % 20 == 0 or step == total_steps:
         log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f} grad {extra['train/grad_norm']:.4f}")
+
+    if held_out:
+      model.eval()
+      validation, counted = 0.0, 0
+      with torch.no_grad():
+        for start in range(0, len(held_out), args.micro_batch):
+          chunk = held_out[start : start + args.micro_batch]
+          input_ids, labels, mask = collate(chunk, tokenizer.pad_token_id, device)
+          count = sum(label != -100 for _, labs in chunk for label in labs)
+          validation += float(model(input_ids=input_ids, attention_mask=mask, labels=labels).loss) * count
+          counted += count
+      model.train()
+      run.log({"val/loss": validation / counted, "train/epoch": epoch})
+      log.info(f"epoch {epoch} validation loss {validation / counted:.4f}")
   run.summary["train/tokens_total"] = tokens
 
 
@@ -180,6 +203,7 @@ def main(args: Namespace) -> None:
         "lr": args.lr,
         "warmup": args.warmup,
         "decay": args.decay,
+        "val": args.val,
         "max_len": args.max_len,
         "max_grad_norm": args.max_grad_norm,
         "eps": args.eps,
@@ -234,6 +258,7 @@ if __name__ == "__main__":
   parser.add_argument("--lr", type=float, default=2e-4)
   parser.add_argument("--warmup", type=float, default=0.05, help="fraction of steps ramping up to --lr")
   parser.add_argument("--decay", type=float, default=0.5, help="fraction of steps decaying --lr to zero")
+  parser.add_argument("--val", type=float, default=0.0, help="fraction held out for validation loss, for tuning only")
   parser.add_argument("--max-len", type=int, default=2048)
   parser.add_argument("--micro-batch", type=int, default=4, help="examples per forward inside a batch")
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
