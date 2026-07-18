@@ -8,7 +8,7 @@ env:
   python:
     type: manual
     version: "3.12"
-    requirements-file: requirements.txt
+    requirements-file: requirements-data.txt
     local-paths:
       - genglove.py
 cloud-instance-types:

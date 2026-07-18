@@ -2883,15 +2883,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pip"
-version = "26.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/01/91/47e7d486260f618783899587af63ccf7980fb60245c3e63dd4571c6b57ad/pip-26.1.2.tar.gz", hash = "sha256:f49cd134c61cf2fd75e0ce2676db03e4054504a5a4986d00f8299ae632dc4605", size = 1840799, upload-time = "2026-05-31T17:33:58.56Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/95/6b5cb3461ea5673ba0995989746db58eb18b91b54dbf331e72f569540946/pip-26.1.2-py3-none-any.whl", hash = "sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab", size = 1813144, upload-time = "2026-05-31T17:33:56.772Z" },
-]
-
-[[package]]
 name = "platformdirs"
 version = "4.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3878,44 +3869,68 @@ name = "semanticdp"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "absl-py" },
-    { name = "datasets" },
-    { name = "huggingface-hub" },
-    { name = "immutabledict" },
-    { name = "langdetect" },
-    { name = "mypy" },
-    { name = "nltk" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
-    { name = "opacus" },
-    { name = "peft" },
-    { name = "pip" },
     { name = "python-dotenv" },
+    { name = "wandb" },
+]
+
+[package.dev-dependencies]
+data = [
+    { name = "datasets" },
+    { name = "huggingface-hub" },
+]
+dev = [
+    { name = "mypy" },
     { name = "ruff" },
+]
+evaluate = [
+    { name = "absl-py" },
+    { name = "datasets" },
+    { name = "immutabledict" },
+    { name = "langdetect" },
+    { name = "nltk" },
     { name = "transformers" },
     { name = "vllm", marker = "sys_platform == 'linux'" },
-    { name = "wandb" },
+]
+train = [
+    { name = "opacus" },
+    { name = "peft" },
+    { name = "torch" },
+    { name = "transformers" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "absl-py", specifier = ">=2.5.0" },
+    { name = "numpy", specifier = ">=2.3.5" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "wandb", specifier = ">=0.28.0" },
+]
+
+[package.metadata.requires-dev]
+data = [
     { name = "datasets", specifier = ">=5.0.0" },
     { name = "huggingface-hub", specifier = ">=0.30.0" },
+]
+dev = [
+    { name = "mypy", specifier = ">=2.2.0" },
+    { name = "ruff", specifier = ">=0.15.21" },
+]
+evaluate = [
+    { name = "absl-py", specifier = ">=2.5.0" },
+    { name = "datasets", specifier = ">=5.0.0" },
     { name = "immutabledict", specifier = ">=4.3.1" },
     { name = "langdetect", specifier = ">=1.0.9" },
-    { name = "mypy", specifier = ">=2.2.0" },
     { name = "nltk", specifier = ">=3.10.0" },
-    { name = "numpy", specifier = ">=2.3.5" },
-    { name = "opacus", specifier = ">=1.6.0" },
-    { name = "peft", specifier = ">=0.19.1" },
-    { name = "pip", specifier = ">=26.1.2" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "ruff", specifier = ">=0.15.21" },
     { name = "transformers", specifier = ">=5.13.1" },
     { name = "vllm", marker = "sys_platform == 'linux'", specifier = ">=0.25.0" },
-    { name = "wandb", specifier = ">=0.28.0" },
+]
+train = [
+    { name = "opacus", specifier = ">=1.6.0" },
+    { name = "peft", specifier = ">=0.19.1" },
+    { name = "torch", specifier = ">=2.11.0" },
+    { name = "transformers", specifier = ">=5.13.1" },
 ]
 
 [[package]]
