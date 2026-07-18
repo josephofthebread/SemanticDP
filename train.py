@@ -15,8 +15,6 @@ from dotenv import load_dotenv
 from opacus.accountants import RDPAccountant
 from opacus.accountants.utils import get_noise_multiplier
 from peft import LoraConfig, get_peft_model
-from torch.func import functional_call, grad_and_value, vmap
-from torch.nn.functional import cross_entropy
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from wandb.sdk.wandb_run import Run
 
@@ -47,17 +45,12 @@ def collate(batch: list[tuple[list[int], list[int]]], pad_id: int, device: Any) 
   return tensor(input_ids), tensor(labels), tensor(mask)
 
 
-def privatize(per_sample: dict[str, Any], clip: float, sigma: float, lot: int, generator: Any) -> dict[str, Any]:
-  """Per-example clip to L2 norm `clip`, sum, add N(0, (sigma*clip)^2) Gaussian noise, average over the lot."""
-  batch = next(iter(per_sample.values())).shape[0]
-  flat = torch.cat([g.reshape(batch, -1).float() for g in per_sample.values()], dim=1)
-  factor = (clip / (flat.norm(dim=1) + 1e-6)).clamp(max=1.0)
-  out = {}
-  for name, g in per_sample.items():
-    summed = (g.float() * factor.view([batch] + [1] * (g.dim() - 1))).sum(0)
-    noise = torch.normal(0.0, sigma * clip, size=summed.shape, generator=generator, device=summed.device)
-    out[name] = (summed + noise) / lot
-  return out
+def clip_into(params: dict[str, Any], summed: dict[str, Any], clip: float) -> None:
+  """Clip the gradient sitting on `params` to L2 norm `clip` and add it into `summed`, in fp32."""
+  norm = torch.sqrt(sum((p.grad.float() ** 2).sum() for p in params.values()))
+  factor = (clip / (norm + 1e-6)).clamp(max=1.0)
+  for name, p in params.items():
+    summed[name] += p.grad.float() * factor
 
 
 def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]], run: Run) -> None:
@@ -88,17 +81,7 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
     run.summary["dp/sigma"], run.summary["dp/epsilon"] = sigma, realized
 
     params = {n: p for n, p in model.named_parameters() if p.requires_grad}
-    constants = {n: p for n, p in model.named_parameters() if not p.requires_grad}
-    constants.update(dict(model.named_buffers()))
     generator = torch.Generator(device=device).manual_seed(args.seed)
-
-    def per_example_loss(trainable: dict[str, Any], ids: Any, labels: Any, mask: Any) -> Any:
-      out = functional_call(
-        model, {**constants, **trainable}, (ids.unsqueeze(0),), {"attention_mask": mask.unsqueeze(0)}
-      )
-      return cross_entropy(out.logits[0][:-1].float(), labels[1:], ignore_index=-100)
-
-    grad_fn = vmap(grad_and_value(per_example_loss), in_dims=(None, 0, 0, 0))
 
   rng = random.Random(args.seed)
   step = 0
@@ -115,15 +98,24 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
       if not lot:
         continue
       batch = [examples[i] for i in lot]
-      input_ids, labels, mask = collate(batch, tokenizer.pad_token_id, device)
       optimizer.zero_grad()
       if private:
-        per_sample, losses = grad_fn(params, input_ids, labels, mask)
-        for name, value in privatize(per_sample, args.max_grad_norm, sigma, args.batch_size, generator).items():
-          params[name].grad = value.to(params[name].dtype)
+        summed = {name: torch.zeros_like(p, dtype=torch.float32) for name, p in params.items()}
+        total = 0.0
+        for ids, labs in batch:
+          optimizer.zero_grad(set_to_none=True)
+          example = model(input_ids=torch.tensor([ids], device=device), labels=torch.tensor([labs], device=device)).loss
+          example.backward()
+          clip_into(params, summed, args.max_grad_norm)
+          total += float(example.detach())
+        optimizer.zero_grad(set_to_none=True)
+        for name, g in summed.items():
+          noise = torch.normal(0.0, sigma * args.max_grad_norm, size=g.shape, generator=generator, device=g.device)
+          params[name].grad = ((g + noise) / args.batch_size).to(params[name].dtype)
         optimizer.step()
-        loss = losses.mean()
+        loss = torch.tensor(total / len(batch))
       else:
+        input_ids, labels, mask = collate(batch, tokenizer.pad_token_id, device)
         loss = model(input_ids=input_ids, attention_mask=mask, labels=labels).loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)

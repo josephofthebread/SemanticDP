@@ -3,7 +3,7 @@ desc: Evaluate one trained adapter
 cmd: python3 evaluate.py --model "$MODEL" --lora "$ADAPTER" $EXTRA
 env:
   docker:
-    image: docker.io/pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+    image: docker.io/pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime
   vars:
     - PIP_BREAK_SYSTEM_PACKAGES: "1"
     - WANDB_ENTITY: josephofthebread

@@ -3,7 +3,7 @@ desc: LoRA fine-tune one grid cell
 cmd: python3 train.py --model "$MODEL" --split "$SPLIT" --seed "$SEED" $EXTRA
 env:
   docker:
-    image: docker.io/pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+    image: docker.io/pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime
   vars:
     - PIP_BREAK_SYSTEM_PACKAGES: "1"
     - WANDB_ENTITY: josephofthebread
