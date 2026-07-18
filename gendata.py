@@ -1,18 +1,22 @@
 #! /usr/bin/env python
 import json
 import logging
+import math
+import re
 from argparse import ArgumentParser, Namespace
 from ast import literal_eval
+from functools import cache
+from itertools import product
 from pathlib import Path
 from random import Random
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import numpy as np
 import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
-
-from splits import DATA_MANIFEST, stage
+from wandb.sdk.wandb_run import Run
 
 log = logging.getLogger("gendata")
 
@@ -192,6 +196,72 @@ def build_alpaca(args: Namespace) -> dict[str, list[dict[str, Any]]]:
   return {"alpaca_train": train}
 
 
+def M1(text: str, p: float, key: str, vocab: list[str]) -> str:
+  tokens = text.split()
+  for i in range(len(tokens)):
+    if Random(f"{key}:{i}").random() < p:
+      tokens[i] = Random(f"{key}:{i}:pick").choice(vocab)
+  return " ".join(tokens)
+
+
+class Tem:
+  WORD = re.compile(r"[A-Za-z]+|[^A-Za-z]+")
+
+  def __init__(self, path: Path, gamma: float) -> None:
+    lines = path.read_text().splitlines()
+    self.words = [line[: line.index(" ")] for line in lines]
+    self.index = {word: i for i, word in enumerate(self.words)}
+    self.matrix = np.array([line.split(" ")[1:] for line in lines], dtype=np.float32)
+    self.norm2 = (self.matrix * self.matrix).sum(1)
+    self.gamma = gamma
+
+  @cache
+  def sample(self, word: str, eps: float) -> tuple[list[int], Any, set[int]]:
+    x = self.matrix[self.index[word]]
+    dist = np.sqrt(np.maximum(self.norm2 + float(x @ x) - 2.0 * (self.matrix @ x), 0.0))
+    near = np.where(dist <= self.gamma)[0]
+    far = len(dist) - len(near)
+    logits = list((eps / 2.0) * -dist[near])
+    candidates = list(map(int, near))
+    if far > 0:
+      logits.append((eps / 2.0) * (-self.gamma + (2.0 / eps) * math.log(far)))
+      candidates.append(-1)
+    weights = np.exp(np.array(logits) - max(logits))
+    return candidates, np.cumsum(weights / weights.sum()), set(map(int, near))
+
+  def sanitize(self, text: str, eps: float, key: str) -> str:
+    out = []
+    for i, part in enumerate(self.WORD.findall(text)):
+      lower = part.lower()
+      if not part.isalpha() or lower not in self.index:
+        out.append(part)
+        continue
+      candidates, cum, near = self.sample(lower, eps)
+      rng = Random(f"{key}:{i}")
+      chosen = candidates[min(int(np.searchsorted(cum, rng.random())), len(candidates) - 1)]
+      if chosen == -1:
+        chosen = rng.randrange(len(self.words))
+        while chosen in near:
+          chosen = rng.randrange(len(self.words))
+      sub = self.words[chosen]
+      if part.isupper():
+        sub = sub.upper()
+      elif part[:1].isupper():
+        sub = sub.capitalize()
+      out.append(sub)
+    return "".join(out)
+
+
+def publish(run: Run, staging: Path, name: str, payload: Any, metadata: dict[str, Any]) -> None:
+  """Write payload to `{name}.json` under staging and log it as a dataset artifact."""
+  path = staging / f"{name}.json"
+  path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+  artifact = wandb.Artifact(name=name, type="dataset", metadata=metadata)
+  artifact.add_file(str(path))
+  run.log_artifact(artifact)
+  log.info(f"wandb: logged artifact {name} ({metadata})")
+
+
 def entity_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
   counts: dict[str, int] = {}
   for row in rows:
@@ -209,53 +279,67 @@ def entity_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  config = {
-    "seed": args.seed,
-    "train_n": args.train_n,
-    "probe_n": args.probe_n,
-    "leak_n": args.leak_n,
-    "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
-    "nemotron_repo": args.nemotron_repo,
-    "alpaca_repo": args.alpaca_repo,
-  }
-  with wandb.init(job_type="gendata", config=config) as run, TemporaryDirectory() as staging:
+  levels = {"m1": args.m1, "m2": args.m2}
+
+  with (
+    wandb.init(
+      job_type="gendata",
+      config={
+        "seed": args.seed,
+        "train_n": args.train_n,
+        "probe_n": args.probe_n,
+        "leak_n": args.leak_n,
+        "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
+        "nemotron_repo": args.nemotron_repo,
+        "alpaca_repo": args.alpaca_repo,
+        "glove": args.glove,
+        "levels": levels,
+        "gamma": args.gamma,
+      },
+    ) as run,
+    TemporaryDirectory() as tmp,
+  ):
+    staging = Path(tmp)
+    glove = run.use_artifact(args.glove, type="embeddings")
+    vectors = next(Path(glove.download()).glob("*.txt"))
+    log.info(f"parsing {vectors.name} ({glove.metadata['vocab_size']} words)")
+    tem = Tem(vectors, args.gamma)
+
     splits = {**build_nemotron(args), **build_alpaca(args)}
 
     train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
     probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
     assert not train_uids & probe_uids, "probe records leaked into the training corpus"
 
-    entries: dict[str, Any] = {}
-    artifacts = []
+    corpora = [name for name in splits if name.endswith("_train")]
     for name, rows in splits.items():
-      artifact, entries[name] = stage(name, rows, Path(staging), entity_stats(rows))
-      artifacts.append(artifact)
-      log.info(f"staged {name}: {entries[name]['n_rows']} rows, sha256 {entries[name]['sha256'][:12]}")
+      publish(run, staging, name, rows, entity_stats(rows))
+    publish(run, staging, "labels", EXTRACTABLE_LABELS, {"n_labels": len(EXTRACTABLE_LABELS)})
 
-    labels_artifact, entries["labels"] = stage(
-      "labels", EXTRACTABLE_LABELS, Path(staging), {"n_labels": len(EXTRACTABLE_LABELS)}
-    )
-    artifacts.append(labels_artifact)
-    log.info(f"staged labels: {len(EXTRACTABLE_LABELS)} labels, sha256 {entries['labels']['sha256'][:12]}")
+    vocab = {
+      split: sorted({token for row in splits[split] for field in ["input", "output"] for token in row[field].split()})
+      for split in corpora
+    }
+    jobs = [(mechanism, level) for mechanism, values in levels.items() for level in values]
 
-    manifest = {"config": config, "splits": entries}
-    DATA_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    DATA_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    log.info(f"wrote {DATA_MANIFEST}")
+    for split, (mechanism, level) in product(corpora, jobs):
+      perturbed = []
+      for row in splits[split]:
+        new = dict(row)
+        for field in ["input", "output"]:
+          key = f"{args.seed}:{split}:{mechanism}:{level}:{row['example_id']}:{field}"
+          text = row[field]
+          new[field] = M1(text, level, key, vocab[split]) if mechanism == "m1" else tem.sanitize(text, level, key)
+        perturbed.append(new)
 
-    index = wandb.Artifact(
-      name="manifest", type="manifest", description="Hashes and build version of every split.", metadata=manifest
-    )
-    index.add_file(str(DATA_MANIFEST))
-
-    for artifact in [*artifacts, index]:
-      run.log_artifact(artifact)
-      log.info(f"wandb: logged artifact {artifact.name}")
+      suffix = f"p{int(level * 100):02d}" if mechanism == "m1" else f"eps{int(level)}"
+      metadata = {"mechanism": mechanism, "level": level, "parent": split, "n_rows": len(perturbed)}
+      publish(run, staging, f"{split}_{mechanism}_{suffix}", perturbed, metadata)
 
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
-  parser = ArgumentParser(description="Build the frozen adaptation corpora for the privacy-mechanism grid.")
+  parser = ArgumentParser(description="Build every corpus of the privacy-mechanism grid: clean, M1 and M2.")
   parser.add_argument("--seed", type=int, default=0)
   parser.add_argument("--nemotron-repo", default="nvidia/Nemotron-PII", help="Hugging Face repo for the PII corpus")
   parser.add_argument("--alpaca-repo", default="tatsu-lab/alpaca", help="Hugging Face repo for the generic corpus")
@@ -264,4 +348,12 @@ if __name__ == "__main__":
   parser.add_argument(
     "--leak-n", type=int, default=375, help="training records re-used for the closed-book leakage probe"
   )
+  parser.add_argument("--glove", default="glove:latest", help="GloVe embeddings artifact NAME:VERSION")
+  parser.add_argument(
+    "--m1", type=lambda v: [float(x) for x in v.split(",")], default=[0.05, 0.15, 0.30, 0.50], help="M1 rates p"
+  )
+  parser.add_argument(
+    "--m2", type=lambda v: [float(x) for x in v.split(",")], default=[1.0, 3.0, 6.0, 12.0], help="M2 budgets epsilon"
+  )
+  parser.add_argument("--gamma", type=float, default=5.0, help="TEM truncation radius in GloVe space")
   main(parser.parse_args())

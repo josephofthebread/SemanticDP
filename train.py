@@ -4,6 +4,7 @@ import logging
 import math
 import random
 from argparse import ArgumentParser, Namespace
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
@@ -18,8 +19,6 @@ from torch.func import functional_call, grad_and_value, vmap
 from torch.nn.functional import cross_entropy
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from wandb.sdk.wandb_run import Run
-
-from splits import DATA_MANIFEST, PERTURB_MANIFEST, fetch
 
 log = logging.getLogger("train")
 
@@ -68,17 +67,17 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
   total_steps = math.ceil(len(examples) / args.batch_size) * args.epochs
   optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
 
-  private = args.target_epsilon is not None
+  private = args.eps is not None
   if private:
     q = args.batch_size / len(examples)
     sigma = get_noise_multiplier(
-      target_epsilon=args.target_epsilon, target_delta=args.delta, sample_rate=q, steps=total_steps, accountant="rdp"
+      target_epsilon=args.eps, target_delta=args.delta, sample_rate=q, steps=total_steps, accountant="rdp"
     )
     accountant = RDPAccountant()
     for _ in range(total_steps):
       accountant.step(noise_multiplier=sigma, sample_rate=q)
     realized = accountant.get_epsilon(delta=args.delta)
-    log.info(f"dp-sgd: sigma {sigma:.4f} for target epsilon {args.target_epsilon} (realized {realized:.4f})")
+    log.info(f"dp-sgd: sigma {sigma:.4f} for target epsilon {args.eps} (realized {realized:.4f})")
     run.summary["dp/sigma"], run.summary["dp/epsilon"] = sigma, realized
 
     params = {n: p for n, p in model.named_parameters() if p.requires_grad}
@@ -126,26 +125,29 @@ def main(args: Namespace) -> None:
   np.random.seed(args.seed)
   torch.manual_seed(args.seed)
 
-  splits = {**json.loads(DATA_MANIFEST.read_text())["splits"], **json.loads(PERTURB_MANIFEST.read_text())["splits"]}
-  if args.split not in splits:
-    raise SystemExit(f"unknown split {args.split!r}; known: {sorted(splits)}")
-
-  config = {
-    "model": args.model,
-    "split": args.split,
-    "seed": args.seed,
-    "epochs": args.epochs,
-    "batch_size": args.batch_size,
-    "lr": args.lr,
-    "max_len": args.max_len,
-    "max_grad_norm": args.max_grad_norm,
-    "target_epsilon": args.target_epsilon,
-    "delta": args.delta,
-    "dtype": args.dtype,
-  }
-
-  with wandb.init(job_type="train", config=config) as run, TemporaryDirectory() as tmp:
-    rows = fetch(run, args.split, splits[args.split]["sha256"])
+  with (
+    wandb.init(
+      job_type="train",
+      config={
+        "model": args.model,
+        "split": args.split,
+        "seed": args.seed,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "max_len": args.max_len,
+        "max_grad_norm": args.max_grad_norm,
+        "eps": args.eps,
+        "delta": args.delta,
+        "dtype": args.dtype,
+      },
+    ) as run,
+    TemporaryDirectory() as tmp,
+  ):
+    corpus = run.use_artifact(args.split, type="dataset")
+    if args.eps is not None and corpus.metadata.get("mechanism"):
+      raise SystemExit(f"--eps needs a clean corpus; {args.split} is {corpus.metadata['mechanism']}")
+    rows = json.loads(next(Path(corpus.download()).glob("*.json")).read_text())
     log.info(f"{args.split}: {len(rows)} rows")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
@@ -160,27 +162,31 @@ def main(args: Namespace) -> None:
     train(args, model, tokenizer, rows, run)
 
     model.save_pretrained(tmp)
-    suffix = f"-eps{args.target_epsilon:g}" if args.target_epsilon is not None else ""
-    artifact = wandb.Artifact(name=f"adapter-{args.split}-s{args.seed}{suffix}", type="model", metadata=config)
-    artifact.add_dir(tmp)
-    run.log_artifact(artifact)
-    log.info(f"wandb: logged artifact {artifact.name}")
+    private = args.eps is not None
+    grid = {
+      "mechanism": "m3" if private else corpus.metadata.get("mechanism", "m0"),
+      "level": args.eps if private else corpus.metadata.get("level", 0.0),
+    }
+    suffix = f"-eps{args.eps:g}" if private else ""
+    name = f"adapter-{args.split.split(':')[0]}-s{args.seed}{suffix}"
+    adapter = wandb.Artifact(name=name, type="model", metadata=grid)
+    adapter.add_dir(tmp)
+    run.log_artifact(adapter)
+    log.info(f"wandb: logged artifact {name} ({grid})")
 
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
-  parser = ArgumentParser(
-    description="LoRA fine-tune one model on one corpus split (DP-SGD when --target-epsilon is set)."
-  )
+  parser = ArgumentParser(description="LoRA fine-tune one model on one corpus split (DP-SGD when --eps is set).")
   parser.add_argument("--model", required=True, help="base model, a HuggingFace id or local path")
-  parser.add_argument("--split", required=True, help="corpus split to train on (base or perturbed, from the manifests)")
+  parser.add_argument("--split", required=True, help="corpus dataset artifact NAME:VERSION (base or perturbed)")
   parser.add_argument("--seed", type=int, default=0)
   parser.add_argument("--epochs", type=int, default=1)
   parser.add_argument("--batch-size", type=int, default=8)
   parser.add_argument("--lr", type=float, default=2e-4)
   parser.add_argument("--max-len", type=int, default=1024)
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
-  parser.add_argument("--target-epsilon", type=float, default=None, help="enable DP-SGD calibrated to this epsilon")
+  parser.add_argument("--eps", type=float, default=None, help="enable DP-SGD calibrated to this epsilon")
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
   parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
   main(parser.parse_args())

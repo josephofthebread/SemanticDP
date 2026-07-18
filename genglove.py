@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-import json
 import logging
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
@@ -10,58 +9,43 @@ import wandb
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 
-from splits import GLOVE_MANIFEST, sha256file
-
 log = logging.getLogger("glove")
 
 
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  config = {"repo_id": args.repo, "revision": args.revision, "file": args.file, "member": args.member}
-
-  with wandb.init(job_type="glove", config=config) as run, TemporaryDirectory() as tmp:
+  with (
+    wandb.init(
+      job_type="glove",
+      config={"repo_id": args.repo, "revision": args.revision, "file": args.file, "member": args.member},
+    ) as run,
+    TemporaryDirectory() as tmp,
+  ):
     archive = hf_hub_download(repo_id=args.repo, filename=args.file, revision=args.revision, cache_dir=tmp)
     log.info(f"extracting {args.member}")
     with ZipFile(archive) as bundle:
       bundle.extract(args.member, tmp)
     vectors = Path(tmp) / args.member
 
-    digest = sha256file(vectors)
     lines = vectors.read_text().splitlines()
     vocab_size, dim = len(lines), len(lines[0].split()) - 1
-    log.info(f"{args.member}: {vocab_size} tokens, dim {dim}, sha256 {digest[:12]}")
+    log.info(f"{args.member}: {vocab_size} tokens, dim {dim}")
 
-    metadata = {**config, "dim": dim, "vocab_size": vocab_size, "sha256": digest}
     artifact = wandb.Artifact(
       name="glove",
       type="embeddings",
-      description="Pinned GloVe 6B.300d word vectors for TEM sanitization.",
-      metadata=metadata,
+      description="GloVe 6B.300d word vectors for TEM sanitization.",
+      metadata={"dim": dim, "vocab_size": vocab_size},
     )
     artifact.add_file(str(vectors))
-
-    GLOVE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    manifest = {"asset": metadata}
-    GLOVE_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    log.info(f"wrote {GLOVE_MANIFEST}")
-
-    index = wandb.Artifact(
-      name="glove-manifest",
-      type="manifest",
-      description="Hash and source of the pinned GloVe vectors.",
-      metadata=manifest,
-    )
-    index.add_file(str(GLOVE_MANIFEST))
-
-    for logged in [artifact, index]:
-      run.log_artifact(logged)
-      log.info(f"wandb: logged artifact {logged.name}")
+    run.log_artifact(artifact)
+    log.info(f"wandb: logged artifact {artifact.name}")
 
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
-  parser = ArgumentParser(description="Pin GloVe word vectors as a wandb artifact and record their hash.")
+  parser = ArgumentParser(description="Publish the GloVe word vectors used by the M2 sanitizer as a wandb artifact.")
   parser.add_argument("--repo", default="stanfordnlp/glove", help="Hugging Face repo hosting the archive")
   parser.add_argument("--revision", default="1db2080b2d94def6e5b0386a523102f9d8849e9d", help="pinned repo commit")
   parser.add_argument("--file", default="glove.6B.zip", help="archive to download from the repo")

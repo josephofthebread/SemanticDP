@@ -18,6 +18,7 @@
     "latexmk",
     "mypy",
     "nltk",
+    "peft",
     "punkt",
     "pyproject",
     "stanfordnlp",

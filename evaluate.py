@@ -18,9 +18,13 @@ from vllm.lora.request import LoRARequest
 from wandb.sdk.wandb_run import Run
 
 from ifeval import instructions_registry
-from splits import DATA_MANIFEST, fetch
 
 log = logging.getLogger("evaluate")
+
+
+def dataset(run: Run, ref: str) -> Any:
+  """Download dataset artifact `ref` (NAME:VERSION) and load the single JSON file it holds."""
+  return json.loads(next(Path(run.use_artifact(ref, type="dataset").download()).glob("*.json")).read_text())
 
 
 def subsample(rows: list[dict[str, Any]], limit: int | None, seed: int) -> list[dict[str, Any]]:
@@ -36,19 +40,19 @@ def normalize(text: str) -> str:
 
 
 class Model:
-  def __init__(self, args: Namespace) -> None:
+  def __init__(self, args: Namespace, lora: Path | None) -> None:
     self.tokenizer = AutoTokenizer.from_pretrained(args.model)
     self.engine = LLM(
       model=args.model,
       seed=args.seed,
       dtype=args.dtype,
-      enable_lora=args.lora is not None,
+      enable_lora=lora is not None,
       max_lora_rank=args.max_lora_rank,
       gpu_memory_utilization=args.gpu_memory_utilization,
       max_model_len=args.max_model_len,
       enforce_eager=args.enforce_eager,
     )
-    self.lora = LoRARequest("adapter", 1, str(args.lora)) if args.lora else None
+    self.lora = LoRARequest("adapter", 1, str(lora)) if lora else None
     self.max_tokens = args.max_tokens
 
   def prompt_ids(self, instruction: str) -> list[int]:
@@ -151,9 +155,10 @@ def eval_ifeval(model: Model, repo: str, limit: int | None, seed: int) -> dict[s
   }
 
 
-def eval_entity_fidelity(model: Model, run: Run, data: dict[str, Any], limit: int | None, seed: int) -> dict[str, Any]:
-  labels_map = fetch(run, "labels", data["labels"]["sha256"])
-  rows = subsample(fetch(run, "nemotron_probe", data["nemotron_probe"]["sha256"]), limit, seed)
+def eval_entity_fidelity(
+  model: Model, labels_map: dict[str, str], probe: list[dict[str, Any]], limit: int | None, seed: int
+) -> dict[str, Any]:
+  rows = subsample(probe, limit, seed)
 
   asked, golds, texts = [], [], []
   for row in rows:
@@ -192,8 +197,8 @@ def eval_entity_fidelity(model: Model, run: Run, data: dict[str, Any], limit: in
   }
 
 
-def eval_entity_leakage(model: Model, run: Run, data: dict[str, Any], limit: int | None, seed: int) -> dict[str, Any]:
-  rows = subsample(fetch(run, "nemotron_leak", data["nemotron_leak"]["sha256"]), limit, seed)
+def eval_entity_leakage(model: Model, leak: list[dict[str, Any]], limit: int | None, seed: int) -> dict[str, Any]:
+  rows = subsample(leak, limit, seed)
 
   asked, golds = [], []
   for row in rows:
@@ -225,9 +230,6 @@ def eval_entity_leakage(model: Model, run: Run, data: dict[str, Any], limit: int
   }
 
 
-TASKS = ["truthfulqa", "ifeval", "entity_fidelity", "entity_leakage"]
-
-
 def main(args: Namespace) -> None:
   load_dotenv()
 
@@ -237,31 +239,39 @@ def main(args: Namespace) -> None:
     log.info("downloading the nltk punkt_tab tokenizer")
     nltk.download("punkt_tab", quiet=True)
 
-  config = {
-    "model": args.model,
-    "lora": str(args.lora) if args.lora else None,
-    "seed": args.seed,
-    "limit": args.limit,
-    "max_tokens": args.max_tokens,
-    "tasks": args.tasks,
-    "subsample_seed": args.subsample_seed,
-  }
-  data = json.loads(DATA_MANIFEST.read_text())["splits"]
-  # The engine is built before wandb.init(). vLLM forks an EngineCore child, and
-  # a child forked from a process with a live wandb run inherits its threads and
-  # service connection: a wandb weakref finalizer then fires inside the child and
-  # deadlocks it on a future that never resolves, leaving the parent waiting in
-  # wait_for_engine_startup forever. Forking first keeps the child clean.
-  model = Model(args)
+  adapter = wandb.Api().artifact(args.lora, type="model") if args.lora else None
+  lora = Path(adapter.download()) if adapter else None
+  if adapter:
+    log.info(f"adapter: {args.lora} {adapter.metadata} downloaded to {lora}")
 
-  with wandb.init(job_type="evaluate", name=args.run, config=config) as run:
-    tasks = {
-      "truthfulqa": lambda: eval_truthfulqa(model, args.truthfulqa_repo, args.limit, args.subsample_seed),
-      "ifeval": lambda: eval_ifeval(model, args.ifeval_repo, args.limit, args.subsample_seed),
-      "entity_fidelity": lambda: eval_entity_fidelity(model, run, data, args.limit, args.subsample_seed),
-      "entity_leakage": lambda: eval_entity_leakage(model, run, data, args.limit, args.subsample_seed),
+  model = Model(args, lora)
+
+  with wandb.init(
+    job_type="evaluate",
+    config={
+      "model": args.model,
+      "lora": args.lora,
+      "mechanism": adapter.metadata["mechanism"] if adapter else "base",
+      "level": adapter.metadata["level"] if adapter else 0.0,
+      "labels": args.labels,
+      "probe": args.probe,
+      "leak": args.leak,
+      "seed": args.seed,
+      "limit": args.limit,
+      "max_tokens": args.max_tokens,
+      "subsample_seed": args.subsample_seed,
+    },
+  ) as run:
+    if args.lora:
+      run.use_artifact(args.lora, type="model")
+    metrics = {
+      "truthfulqa": eval_truthfulqa(model, args.truthfulqa_repo, args.limit, args.subsample_seed),
+      "ifeval": eval_ifeval(model, args.ifeval_repo, args.limit, args.subsample_seed),
+      "entity_fidelity": eval_entity_fidelity(
+        model, dataset(run, args.labels), dataset(run, args.probe), args.limit, args.subsample_seed
+      ),
+      "entity_leakage": eval_entity_leakage(model, dataset(run, args.leak), args.limit, args.subsample_seed),
     }
-    metrics = {name: tasks[name]() for name in args.tasks}
     for name, values in metrics.items():
       log.info(f"{name}: {values}")
       for key, value in values.items():
@@ -274,9 +284,10 @@ if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
   parser = ArgumentParser(description="Evaluate one model (optionally a LoRA adapter) on the alignment suite.")
   parser.add_argument("--model", required=True, help="base model, a HuggingFace id or local path")
-  parser.add_argument("--lora", type=Path, default=None, help="LoRA adapter directory; omit for the untuned model")
-  parser.add_argument("--run", required=True, help="name for this run in wandb")
-  parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
+  parser.add_argument("--lora", default=None, help="adapter model artifact NAME:VERSION logged by train.py")
+  parser.add_argument("--labels", default="labels:latest", help="extractable-label map artifact NAME:VERSION")
+  parser.add_argument("--probe", default="nemotron_probe:latest", help="entity-fidelity probe artifact NAME:VERSION")
+  parser.add_argument("--leak", default="nemotron_leak:latest", help="leakage probe artifact NAME:VERSION")
   parser.add_argument("--limit", type=int, default=None, help="evaluate only N items per task (smoke test)")
   parser.add_argument("--seed", type=int, default=0)
   parser.add_argument("--subsample-seed", type=int, default=0, help="seed for per-task subsampling under --limit")
