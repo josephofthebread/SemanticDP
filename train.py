@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from opacus.accountants import RDPAccountant
 from opacus.accountants.utils import get_noise_multiplier
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_wsd_schedule
 from wandb.sdk.wandb_run import Run
 
 log = logging.getLogger("train")
@@ -66,6 +66,12 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
 
   total_steps = math.ceil(len(examples) / args.batch_size) * args.epochs
   optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
+  scheduler = get_wsd_schedule(
+    optimizer,
+    num_warmup_steps=round(args.warmup * total_steps),
+    num_decay_steps=round(args.decay * total_steps),
+    num_training_steps=total_steps,
+  )
 
   private = args.eps is not None
   if private:
@@ -129,9 +135,10 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
           weighted += float(chunk_loss.detach()) * count
         torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)
         optimizer.step()
+      scheduler.step()
       step += 1
       value = weighted / supervised
-      run.log({"train/loss": value, "train/epoch": epoch})
+      run.log({"train/loss": value, "train/epoch": epoch, "train/lr": scheduler.get_last_lr()[0]})
       if step % 20 == 0 or step == total_steps:
         log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f}")
 
@@ -153,6 +160,8 @@ def main(args: Namespace) -> None:
         "batch_size": args.batch_size,
         "micro_batch": args.micro_batch,
         "lr": args.lr,
+        "warmup": args.warmup,
+        "decay": args.decay,
         "max_len": args.max_len,
         "max_grad_norm": args.max_grad_norm,
         "eps": args.eps,
@@ -205,6 +214,8 @@ if __name__ == "__main__":
   parser.add_argument("--epochs", type=int, default=3)
   parser.add_argument("--batch-size", type=int, default=16)
   parser.add_argument("--lr", type=float, default=2e-4)
+  parser.add_argument("--warmup", type=float, default=0.05, help="fraction of steps ramping up to --lr")
+  parser.add_argument("--decay", type=float, default=0.5, help="fraction of steps decaying --lr to zero")
   parser.add_argument("--max-len", type=int, default=2048)
   parser.add_argument("--micro-batch", type=int, default=4, help="examples per forward inside a batch")
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
