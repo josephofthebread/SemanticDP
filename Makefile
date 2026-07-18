@@ -38,6 +38,10 @@ ruff: ruff-format ruff-lint ## Run all ruff validation checks.
 mypy: ## Run mypy over the Python sources.
 	uv run mypy --config-file "$(MYPY_CONFIG)" .
 
+.PHONY: requirements
+requirements: ## Export the locked dependencies to requirements.txt for DataSphere jobs.
+	uv export --quiet --frozen --no-hashes --no-emit-project -o requirements.txt
+
 .PHONY: pdf
 pdf: ## Compile every LaTeX document into its PDF.
 	@set -eu; \

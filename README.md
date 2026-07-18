@@ -28,3 +28,11 @@ Use `./train.py` to LoRA fine-tune one model on one corpus split:
 ./train.py --model Qwen/Qwen3-1.7B --split nemotron_train_m2_eps3:latest             # M2
 ./train.py --model Qwen/Qwen3-1.7B --split nemotron_train:latest --eps 8             # M3
 ```
+
+## Deployment
+`_jobs/deploy.sh` submits one phase of the grid:
+```bash
+uv tool install datasphere
+./_jobs/deploy.sh train
+./_jobs/deploy.sh evaluate
+```

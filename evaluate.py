@@ -27,14 +27,6 @@ def dataset(run: Run, ref: str) -> Any:
   return json.loads(next(Path(run.use_artifact(ref, type="dataset").download()).glob("*.json")).read_text())
 
 
-def subsample(rows: list[dict[str, Any]], limit: int | None, seed: int) -> list[dict[str, Any]]:
-  if limit is None or limit >= len(rows):
-    return rows
-  rows = list(rows)
-  Random(seed).shuffle(rows)
-  return rows[:limit]
-
-
 def normalize(text: str) -> str:
   return " ".join(text.lower().split())
 
@@ -99,8 +91,8 @@ class Model:
     return scores
 
 
-def eval_truthfulqa(model: Model, repo: str, limit: int | None, seed: int) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(repo, "multiple_choice", split="validation")), limit, seed)
+def eval_truthfulqa(model: Model, repo: str) -> dict[str, Any]:
+  rows = list(load_dataset(repo, "multiple_choice", split="validation"))
   log.info(f"truthfulqa: {len(rows)} questions")
 
   contexts = [row["question"] for row in rows]
@@ -126,8 +118,8 @@ def eval_truthfulqa(model: Model, repo: str, limit: int | None, seed: int) -> di
   }
 
 
-def eval_ifeval(model: Model, repo: str, limit: int | None, seed: int) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(repo, split="train")), limit, seed)
+def eval_ifeval(model: Model, repo: str) -> dict[str, Any]:
+  rows = list(load_dataset(repo, split="train"))
   log.info(f"ifeval: {len(rows)} prompts")
 
   responses = model.generate([row["prompt"] for row in rows])
@@ -156,12 +148,10 @@ def eval_ifeval(model: Model, repo: str, limit: int | None, seed: int) -> dict[s
 
 
 def eval_entity_fidelity(
-  model: Model, labels_map: dict[str, str], probe: list[dict[str, Any]], limit: int | None, seed: int
+  model: Model, labels_map: dict[str, str], probe: list[dict[str, Any]], seed: int
 ) -> dict[str, Any]:
-  rows = subsample(probe, limit, seed)
-
   asked, golds, texts = [], [], []
-  for row in rows:
+  for row in probe:
     rng = Random(f"{seed}-{row['example_id']}")
     labels = sorted({span["label"] for span in row["spans"]} & labels_map.keys())
     if not labels:
@@ -197,11 +187,9 @@ def eval_entity_fidelity(
   }
 
 
-def eval_entity_leakage(model: Model, leak: list[dict[str, Any]], limit: int | None, seed: int) -> dict[str, Any]:
-  rows = subsample(leak, limit, seed)
-
+def eval_entity_leakage(model: Model, leak: list[dict[str, Any]]) -> dict[str, Any]:
   asked, golds = [], []
-  for row in rows:
+  for row in leak:
     text = row["text"]
     cut = len(text) // 2
     hidden = list(dict.fromkeys(span["text"] for span in row["spans"] if span["start"] >= cut))
@@ -257,20 +245,16 @@ def main(args: Namespace) -> None:
       "probe": args.probe,
       "leak": args.leak,
       "seed": args.seed,
-      "limit": args.limit,
       "max_tokens": args.max_tokens,
-      "subsample_seed": args.subsample_seed,
     },
   ) as run:
     if args.lora:
       run.use_artifact(args.lora, type="model")
     metrics = {
-      "truthfulqa": eval_truthfulqa(model, args.truthfulqa_repo, args.limit, args.subsample_seed),
-      "ifeval": eval_ifeval(model, args.ifeval_repo, args.limit, args.subsample_seed),
-      "entity_fidelity": eval_entity_fidelity(
-        model, dataset(run, args.labels), dataset(run, args.probe), args.limit, args.subsample_seed
-      ),
-      "entity_leakage": eval_entity_leakage(model, dataset(run, args.leak), args.limit, args.subsample_seed),
+      "truthfulqa": eval_truthfulqa(model, args.truthfulqa_repo),
+      "ifeval": eval_ifeval(model, args.ifeval_repo),
+      "entity_fidelity": eval_entity_fidelity(model, dataset(run, args.labels), dataset(run, args.probe), args.seed),
+      "entity_leakage": eval_entity_leakage(model, dataset(run, args.leak)),
     }
     for name, values in metrics.items():
       log.info(f"{name}: {values}")
@@ -288,9 +272,7 @@ if __name__ == "__main__":
   parser.add_argument("--labels", default="labels:latest", help="extractable-label map artifact NAME:VERSION")
   parser.add_argument("--probe", default="nemotron_probe:latest", help="entity-fidelity probe artifact NAME:VERSION")
   parser.add_argument("--leak", default="nemotron_leak:latest", help="leakage probe artifact NAME:VERSION")
-  parser.add_argument("--limit", type=int, default=None, help="evaluate only N items per task (smoke test)")
   parser.add_argument("--seed", type=int, default=0)
-  parser.add_argument("--subsample-seed", type=int, default=0, help="seed for per-task subsampling under --limit")
   parser.add_argument("--truthfulqa-repo", default="truthfulqa/truthful_qa", help="Hugging Face repo for TruthfulQA")
   parser.add_argument("--ifeval-repo", default="google/IFEval", help="Hugging Face repo for IFEval")
   parser.add_argument("--max-tokens", type=int, default=768)

@@ -1,0 +1,19 @@
+name: SemanticDP-evaluate
+desc: Evaluate one trained adapter
+cmd: python3 evaluate.py --model "$MODEL" --lora "$ADAPTER" $EXTRA
+env:
+  vars:
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+    - MODEL
+    - ADAPTER
+    - EXTRA
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements.txt
+    local-paths:
+      - evaluate.py
+      - ifeval
+cloud-instance-types:
+  - g2.1

@@ -23,6 +23,7 @@
     "pyproject",
     "stanfordnlp",
     "tatsu",
+    "tiiuae",
     "truthfulqa",
     "uids",
     "vllm",

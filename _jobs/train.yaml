@@ -1,0 +1,19 @@
+name: SemanticDP-train
+desc: LoRA fine-tune one grid cell
+cmd: python3 train.py --model "$MODEL" --split "$SPLIT" --seed "$SEED" $EXTRA
+env:
+  vars:
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+    - MODEL
+    - SPLIT
+    - SEED
+    - EXTRA
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements.txt
+    local-paths:
+      - train.py
+cloud-instance-types:
+  - g2.1
