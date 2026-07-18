@@ -32,8 +32,8 @@ echo "${#cells[@]} cells"
 IFS='|' read -r MODEL SPLIT SEED EXTRA <<<"${cells[0]}"
 export MODEL SPLIT SEED EXTRA ADAPTER
 adapter() {
-  local eps=${EXTRA#--eps }
-  [[ -n $EXTRA ]] && echo "adapter-${SPLIT%%:*}-s$SEED-eps$eps:latest" || echo "adapter-${SPLIT%%:*}-s$SEED:latest"
+  local eps=${EXTRA#--eps } name="adapter-${MODEL##*/}-${SPLIT%%:*}-s$SEED"
+  [[ -n $EXTRA ]] && echo "$name-eps$eps:latest" || echo "$name:latest"
 }
 
 job=$(mktemp)

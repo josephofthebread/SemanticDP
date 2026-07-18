@@ -31,7 +31,6 @@ def encode(tokenizer: Any, row: dict[str, Any], max_len: int) -> tuple[list[int]
     tokenize=True,
     add_generation_prompt=True,
     return_dict=False,
-    enable_thinking=False,
   )
   completion = tokenizer.encode(row["output"], add_special_tokens=False) + [tokenizer.eos_token_id]
   ids = list(prompt) + completion
@@ -48,22 +47,30 @@ def collate(batch: list[tuple[list[int], list[int]]], pad_id: int, device: Any) 
   return tensor(input_ids), tensor(labels), tensor(mask)
 
 
-def privatize(per_sample: dict[str, Any], clip: float, sigma: float, generator: Any) -> dict[str, Any]:
-  """Per-example clip to L2 norm `clip`, sum, add N(0, (sigma*clip)^2) Gaussian noise, average over the batch."""
+def privatize(per_sample: dict[str, Any], clip: float, sigma: float, lot: int, generator: Any) -> dict[str, Any]:
+  """Per-example clip to L2 norm `clip`, sum, add N(0, (sigma*clip)^2) Gaussian noise, average over the lot."""
   batch = next(iter(per_sample.values())).shape[0]
-  flat = torch.cat([g.reshape(batch, -1) for g in per_sample.values()], dim=1)
+  flat = torch.cat([g.reshape(batch, -1).float() for g in per_sample.values()], dim=1)
   factor = (clip / (flat.norm(dim=1) + 1e-6)).clamp(max=1.0)
   out = {}
   for name, g in per_sample.items():
-    summed = (g * factor.view([batch] + [1] * (g.dim() - 1))).sum(0)
+    summed = (g.float() * factor.view([batch] + [1] * (g.dim() - 1))).sum(0)
     noise = torch.normal(0.0, sigma * clip, size=summed.shape, generator=generator, device=summed.device)
-    out[name] = (summed + noise) / batch
+    out[name] = (summed + noise) / lot
   return out
 
 
 def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]], run: Run) -> None:
   device = model.device
-  examples = [encode(tokenizer, row, args.max_len) for row in rows]
+  examples = []
+  for row in rows:
+    ids, labels = encode(tokenizer, row, args.max_len)
+    if any(label != -100 for label in labels):
+      examples.append((ids, labels))
+  if len(examples) < len(rows):
+    log.info(f"dropped {len(rows) - len(examples)} rows whose prompt fills max_len {args.max_len}")
+  run.summary["train/examples"], run.summary["train/dropped"] = len(examples), len(rows) - len(examples)
+
   total_steps = math.ceil(len(examples) / args.batch_size) * args.epochs
   optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
 
@@ -95,16 +102,24 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
 
   rng = random.Random(args.seed)
   step = 0
+  steps_per_epoch = math.ceil(len(examples) / args.batch_size)
   for epoch in range(args.epochs):
-    order = list(range(len(examples)))
-    rng.shuffle(order)
-    for start in range(0, len(examples), args.batch_size):
-      batch = [examples[i] for i in order[start : start + args.batch_size]]
+    if private:
+      lots = ([i for i in range(len(examples)) if rng.random() < q] for _ in range(steps_per_epoch))
+    else:
+      order = list(range(len(examples)))
+      rng.shuffle(order)
+      lots = (order[start : start + args.batch_size] for start in range(0, len(examples), args.batch_size))
+
+    for lot in lots:
+      if not lot:
+        continue
+      batch = [examples[i] for i in lot]
       input_ids, labels, mask = collate(batch, tokenizer.pad_token_id, device)
       optimizer.zero_grad()
       if private:
         per_sample, losses = grad_fn(params, input_ids, labels, mask)
-        for name, value in privatize(per_sample, args.max_grad_norm, sigma, generator).items():
+        for name, value in privatize(per_sample, args.max_grad_norm, sigma, args.batch_size, generator).items():
           params[name].grad = value.to(params[name].dtype)
         optimizer.step()
         loss = losses.mean()
@@ -114,9 +129,10 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
         torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)
         optimizer.step()
       step += 1
-      run.log({"train/loss": float(loss), "train/epoch": epoch})
+      value = float(loss.detach())
+      run.log({"train/loss": value, "train/epoch": epoch})
       if step % 20 == 0 or step == total_steps:
-        log.info(f"step {step}/{total_steps} epoch {epoch} loss {float(loss):.4f}")
+        log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f}")
 
 
 def main(args: Namespace) -> None:
@@ -156,7 +172,10 @@ def main(args: Namespace) -> None:
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=getattr(torch, args.dtype)).to("cuda")  # type: ignore[arg-type]
     lora = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0, bias="none")
     model = get_peft_model(model, lora)
-    model.eval()
+    for module in model.modules():
+      if isinstance(module, torch.nn.Dropout):
+        module.p = 0.0
+    model.train()
     model.print_trainable_parameters()
 
     train(args, model, tokenizer, rows, run)
@@ -168,7 +187,7 @@ def main(args: Namespace) -> None:
       "level": args.eps if private else corpus.metadata.get("level", 0.0),
     }
     suffix = f"-eps{args.eps:g}" if private else ""
-    name = f"adapter-{args.split.split(':')[0]}-s{args.seed}{suffix}"
+    name = f"adapter-{args.model.split('/')[-1]}-{args.split.split(':')[0]}-s{args.seed}{suffix}"
     adapter = wandb.Artifact(name=name, type="model", metadata=grid)
     adapter.add_dir(tmp)
     run.log_artifact(adapter)
@@ -181,10 +200,10 @@ if __name__ == "__main__":
   parser.add_argument("--model", required=True, help="base model, a HuggingFace id or local path")
   parser.add_argument("--split", required=True, help="corpus dataset artifact NAME:VERSION (base or perturbed)")
   parser.add_argument("--seed", type=int, default=0)
-  parser.add_argument("--epochs", type=int, default=1)
-  parser.add_argument("--batch-size", type=int, default=8)
+  parser.add_argument("--epochs", type=int, default=3)
+  parser.add_argument("--batch-size", type=int, default=16)
   parser.add_argument("--lr", type=float, default=2e-4)
-  parser.add_argument("--max-len", type=int, default=1024)
+  parser.add_argument("--max-len", type=int, default=2048)
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
   parser.add_argument("--eps", type=float, default=None, help="enable DP-SGD calibrated to this epsilon")
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
