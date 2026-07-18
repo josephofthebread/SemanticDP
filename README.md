@@ -8,31 +8,29 @@ Copyright (C) 2026, Dmitry Scherbakov. Licensed after MIT license. All rights re
 - Most recent version of the paper: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/paper.zip).
 - Wandb (experiments): <https://wandb.ai/josephofthebread/SemanticDP/overview>.
 
-## Embeddings
-Use `./genglove.py` to publish the GloVe vectors used by the M2 (TEM) sanitizer (fetched from the official `stanfordnlp/glove` mirror) as a wandb artifact:
+## Prerequisites
+Before running experiments, setup environment variables:
 ```bash
-./genglove.py
+WANDB_ENTITY=josephofthebread
+WANDB_PROJECT=SemanticDP
+DATASPHERE_PROJECT=...  # project ID
+GRPC_VERBOSITY=ERROR    # the CLI forks per submit; gRPC logs every inherited descriptor at INFO
 ```
-
-## Data generation
-Use `./gendata.py` to build every corpus of the grid in one pass -- the clean one, the probes, and the M1 and M2 (see the [proposal](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip)) altered versions, derived from them:
-```bash
-./gendata.py
-```
-
-## Training
-Use `./train.py` to LoRA fine-tune one model on one corpus split:
-```bash
-./train.py --model Qwen/Qwen3-1.7B --split nemotron_train:latest                     # M0
-./train.py --model Qwen/Qwen3-1.7B --split nemotron_train_m1_p05:latest              # M1
-./train.py --model Qwen/Qwen3-1.7B --split nemotron_train_m2_eps3:latest             # M2
-./train.py --model Qwen/Qwen3-1.7B --split nemotron_train:latest --eps 8             # M3
-```
-
-## Deployment
-`_jobs/deploy.sh` submits one phase of the grid:
+Prepare configurations:
 ```bash
 uv tool install datasphere
+source .env
+make requirements
+```
+
+## Data and embeddings generation
+```bash
+datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/genglove.yaml
+datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/gendata.yaml
+```
+
+## Training and evaluation
+```bash
 ./_jobs/deploy.sh train
 ./_jobs/deploy.sh evaluate
 ```

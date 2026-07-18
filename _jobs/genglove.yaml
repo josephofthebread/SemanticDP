@@ -1,0 +1,15 @@
+name: SemanticDP-genglove
+desc: Publish the GloVe vectors as a wandb artifact
+cmd: python3 genglove.py
+env:
+  vars:
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements.txt
+    local-paths:
+      - genglove.py
+cloud-instance-types:
+  - c1.4
