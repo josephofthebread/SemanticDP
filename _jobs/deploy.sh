@@ -45,11 +45,20 @@ else
 fi
 template=$(jq -r .job_id "$job")
 
-for cell in "${cells[@]:1}"; do
+# A failed fork must not abort the rest: the grid is submitted once and a partial submission is
+# worse than a reported one. LIMIT caps how many cells are forked, for a first wave against quota.
+failed=()
+for cell in "${cells[@]:1:${LIMIT:-999}}"; do
   IFS='|' read -r MODEL SPLIT SEED EXTRA <<<"$cell"
   if [[ $phase == train ]]; then
-    datasphere project job fork --id "$template" --async --env-var MODEL="$MODEL" --env-var SPLIT="$SPLIT" --env-var SEED="$SEED" --env-var EXTRA="$EXTRA"
+    datasphere project job fork --id "$template" --async --env-var MODEL="$MODEL" --env-var SPLIT="$SPLIT" --env-var SEED="$SEED" --env-var EXTRA="$EXTRA" || failed+=("$cell")
   else
-    datasphere project job fork --id "$template" --async --env-var MODEL="$MODEL" --env-var ADAPTER="$(adapter)" --env-var EXTRA=
+    datasphere project job fork --id "$template" --async --env-var MODEL="$MODEL" --env-var ADAPTER="$(adapter)" --env-var EXTRA= || failed+=("$cell")
   fi
 done
+
+if ((${#failed[@]})); then
+  echo "${#failed[@]} cells failed to submit:" >&2
+  printf '  %s\n' "${failed[@]}" >&2
+  exit 1
+fi

@@ -98,30 +98,39 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
       if not lot:
         continue
       batch = [examples[i] for i in lot]
-      optimizer.zero_grad()
+      # Both branches report the same statistic: the loss averaged over supervised tokens, weighted
+      # by each unit's token count. Averaging per example instead would not be comparable between
+      # arms, since a draft example carries ~188 supervised tokens and an extract one ~2.
+      weighted, supervised = 0.0, 0
       if private:
         summed = {name: torch.zeros_like(p, dtype=torch.float32) for name, p in params.items()}
-        total = 0.0
         for ids, labs in batch:
           optimizer.zero_grad(set_to_none=True)
           example = model(input_ids=torch.tensor([ids], device=device), labels=torch.tensor([labs], device=device)).loss
           example.backward()
           clip_into(params, summed, args.max_grad_norm)
-          total += float(example.detach())
+          count = sum(label != -100 for label in labs)
+          weighted += float(example.detach()) * count
+          supervised += count
         optimizer.zero_grad(set_to_none=True)
         for name, g in summed.items():
           noise = torch.normal(0.0, sigma * args.max_grad_norm, size=g.shape, generator=generator, device=g.device)
           params[name].grad = ((g + noise) / args.batch_size).to(params[name].dtype)
         optimizer.step()
-        loss = torch.tensor(total / len(batch))
       else:
-        input_ids, labels, mask = collate(batch, tokenizer.pad_token_id, device)
-        loss = model(input_ids=input_ids, attention_mask=mask, labels=labels).loss
-        loss.backward()
+        optimizer.zero_grad()
+        chunks = [batch[start : start + args.micro_batch] for start in range(0, len(batch), args.micro_batch)]
+        counts = [sum(label != -100 for _, labs in chunk for label in labs) for chunk in chunks]
+        supervised = sum(counts)
+        for chunk, count in zip(chunks, counts, strict=True):
+          input_ids, labels, mask = collate(chunk, tokenizer.pad_token_id, device)
+          chunk_loss = model(input_ids=input_ids, attention_mask=mask, labels=labels).loss
+          (chunk_loss * count / supervised).backward()
+          weighted += float(chunk_loss.detach()) * count
         torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], args.max_grad_norm)
         optimizer.step()
       step += 1
-      value = float(loss.detach())
+      value = weighted / supervised
       run.log({"train/loss": value, "train/epoch": epoch})
       if step % 20 == 0 or step == total_steps:
         log.info(f"step {step}/{total_steps} epoch {epoch} loss {value:.4f}")
@@ -142,6 +151,7 @@ def main(args: Namespace) -> None:
         "seed": args.seed,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "micro_batch": args.micro_batch,
         "lr": args.lr,
         "max_len": args.max_len,
         "max_grad_norm": args.max_grad_norm,
@@ -196,6 +206,7 @@ if __name__ == "__main__":
   parser.add_argument("--batch-size", type=int, default=16)
   parser.add_argument("--lr", type=float, default=2e-4)
   parser.add_argument("--max-len", type=int, default=2048)
+  parser.add_argument("--micro-batch", type=int, default=4, help="examples per forward inside a batch")
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
   parser.add_argument("--eps", type=float, default=None, help="enable DP-SGD calibrated to this epsilon")
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
