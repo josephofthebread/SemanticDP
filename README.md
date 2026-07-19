@@ -28,9 +28,3 @@ make requirements
 datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/genglove.yaml
 datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/gendata.yaml
 ```
-
-## Training and evaluation
-```bash
-./_jobs/deploy.sh train
-./_jobs/deploy.sh evaluate
-```

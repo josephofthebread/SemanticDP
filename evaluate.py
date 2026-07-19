@@ -43,6 +43,7 @@ class Model:
       gpu_memory_utilization=args.gpu_memory_utilization,
       max_model_len=args.max_model_len,
       enforce_eager=args.enforce_eager,
+      async_scheduling=False,
     )
     self.lora = LoRARequest("adapter", 1, str(lora)) if lora else None
     self.max_tokens = args.max_tokens
