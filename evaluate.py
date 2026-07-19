@@ -8,13 +8,12 @@ from random import Random
 from typing import Any
 
 import nltk
+import torch
 import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
-from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
-from vllm.inputs import TokensPrompt
-from vllm.lora.request import LoRARequest
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from wandb.sdk.wandb_run import Run
 
 from ifeval import instructions_registry
@@ -32,21 +31,14 @@ def normalize(text: str) -> str:
 
 
 class Model:
-  def __init__(self, args: Namespace, lora: Path | None) -> None:
-    self.tokenizer = AutoTokenizer.from_pretrained(args.model)
-    self.engine = LLM(
-      model=args.model,
-      seed=args.seed,
-      dtype=args.dtype,
-      enable_lora=lora is not None,
-      max_lora_rank=args.max_lora_rank,
-      gpu_memory_utilization=args.gpu_memory_utilization,
-      max_model_len=args.max_model_len,
-      enforce_eager=True,
-      async_scheduling=False,
-    )
-    self.lora = LoRARequest("adapter", 1, str(lora)) if lora else None
-    self.max_tokens = args.max_tokens
+  def __init__(self, name: str, lora: Path | None, dtype: str, max_tokens: int, batch: int) -> None:
+    self.tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
+    if self.tokenizer.pad_token_id is None:
+      self.tokenizer.pad_token = self.tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(name, dtype=getattr(torch, dtype)).to("cuda")  # type: ignore[arg-type]
+    self.model = (PeftModel.from_pretrained(model, str(lora)) if lora else model).eval()
+    self.max_tokens = max_tokens
+    self.batch = batch
 
   def prompt_ids(self, instruction: str) -> list[int]:
     ids = self.tokenizer.apply_chat_template(
@@ -59,31 +51,48 @@ class Model:
     return list(ids)
 
   def generate(self, instructions: list[str]) -> list[str]:
-    params = SamplingParams(temperature=0.0, max_tokens=self.max_tokens)
-    prompts = [TokensPrompt(prompt_token_ids=self.prompt_ids(text)) for text in instructions]
-    outputs = self.engine.generate(prompts, params, lora_request=self.lora)
-    return [output.outputs[0].text.strip() for output in outputs]
+    outputs = []
+    for start in range(0, len(instructions), self.batch):
+      chunk = [self.prompt_ids(text) for text in instructions[start : start + self.batch]]
+      width = max(len(ids) for ids in chunk)
+      pad = self.tokenizer.pad_token_id
+      input_ids = torch.tensor([[pad] * (width - len(ids)) + ids for ids in chunk], device="cuda")
+      mask = torch.tensor([[0] * (width - len(ids)) + [1] * len(ids) for ids in chunk], device="cuda")
+      with torch.no_grad():
+        generated = self.model.generate(
+          input_ids=input_ids,
+          attention_mask=mask,
+          max_new_tokens=self.max_tokens,
+          do_sample=False,
+          pad_token_id=pad,
+        )
+      outputs += self.tokenizer.batch_decode(generated[:, width:], skip_special_tokens=True)
+    return [text.strip() for text in outputs]
 
   def choice_logprobs(self, contexts: list[str], choices: list[list[str]]) -> list[list[float]]:
-    prompts, spans = [], []
+    pairs, spans = [], []
     for context, options in zip(contexts, choices, strict=True):
       context_ids = self.prompt_ids(context)
       for option in options:
         option_ids = self.tokenizer.encode(option, add_special_tokens=False)
-        prompts.append(TokensPrompt(prompt_token_ids=context_ids + option_ids))
+        pairs.append(context_ids + option_ids)
         spans.append((len(context_ids), len(option_ids)))
 
-    params = SamplingParams(temperature=0.0, max_tokens=1, prompt_logprobs=0)
-    outputs = self.engine.generate(prompts, params, lora_request=self.lora)
-
     totals = []
-    for output, (start, length) in zip(outputs, spans, strict=True):
-      logprobs = output.prompt_logprobs
-      total = 0.0
-      for position in range(start, start + length):
-        entry = logprobs[position]
-        total += next(iter(entry.values())).logprob
-      totals.append(total)
+    for start in range(0, len(pairs), self.batch):
+      chunk = pairs[start : start + self.batch]
+      width = max(len(ids) for ids in chunk)
+      pad = self.tokenizer.pad_token_id
+      input_ids = torch.tensor([ids + [pad] * (width - len(ids)) for ids in chunk], device="cuda")
+      mask = torch.tensor([[1] * len(ids) + [0] * (width - len(ids)) for ids in chunk], device="cuda")
+      with torch.no_grad():
+        logprobs = self.model(input_ids=input_ids, attention_mask=mask).logits.float().log_softmax(-1)
+      for row, ids in enumerate(chunk):
+        context_length, option_length = spans[start + row]
+        total = 0.0
+        for position in range(context_length, context_length + option_length):
+          total += float(logprobs[row, position - 1, ids[position]])
+        totals.append(total)
 
     scores, cursor = [], 0
     for options in choices:
@@ -233,7 +242,7 @@ def main(args: Namespace) -> None:
   if adapter:
     log.info(f"adapter: {args.lora} {adapter.metadata} downloaded to {lora}")
 
-  model = Model(args, lora)
+  model = Model(args.model, lora, args.dtype, args.max_tokens, args.batch_size)
 
   with wandb.init(
     job_type="evaluate",
@@ -247,6 +256,7 @@ def main(args: Namespace) -> None:
       "leak": args.leak,
       "seed": args.seed,
       "max_tokens": args.max_tokens,
+      "batch_size": args.batch_size,
     },
   ) as run:
     if args.lora:
@@ -277,8 +287,6 @@ if __name__ == "__main__":
   parser.add_argument("--truthfulqa-repo", default="truthfulqa/truthful_qa", help="Hugging Face repo for TruthfulQA")
   parser.add_argument("--ifeval-repo", default="google/IFEval", help="Hugging Face repo for IFEval")
   parser.add_argument("--max-tokens", type=int, default=768)
-  parser.add_argument("--max-model-len", type=int, default=4096)
-  parser.add_argument("--dtype", default="auto", choices=["auto", "half", "bfloat16", "float32"])
-  parser.add_argument("--max-lora-rank", type=int, default=32)
-  parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
+  parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+  parser.add_argument("--batch-size", type=int, default=64, help="sequences per forward pass")
   main(parser.parse_args())
