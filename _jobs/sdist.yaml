@@ -1,0 +1,21 @@
+name: SemanticDP-sdist
+desc: Compute the semantic distortion score S on corpora and on generations
+cmd: >
+  python3 sdist.py
+  --corpora nemotron alpaca
+  --arms m1_p05 m1_p15 m1_p30 m1_p50 m2_eps1 m2_eps3 m2_eps6 m2_eps12
+env:
+  docker:
+    image: docker.io/pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime
+  vars:
+    - PIP_BREAK_SYSTEM_PACKAGES: "1"
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements-sdist.txt
+    local-paths:
+      - sdist.py
+cloud-instance-types:
+  - g2.1

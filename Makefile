@@ -1,8 +1,8 @@
 SHELL := /bin/sh
 
 MYPY_CONFIG := $(CURDIR)/pyproject.toml
-DEPENDENCY_GROUPS := data train evaluate
-TEX_DIRS := proposal pres
+DEPENDENCY_GROUPS := data train evaluate sdist
+TEX_DIRS := proposal pres paper
 TEX_MAIN ?= main
 
 .DEFAULT_GOAL := help
