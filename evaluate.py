@@ -42,7 +42,7 @@ class Model:
       max_lora_rank=args.max_lora_rank,
       gpu_memory_utilization=args.gpu_memory_utilization,
       max_model_len=args.max_model_len,
-      enforce_eager=args.enforce_eager,
+      enforce_eager=True,
       async_scheduling=False,
     )
     self.lora = LoRARequest("adapter", 1, str(lora)) if lora else None
@@ -281,5 +281,4 @@ if __name__ == "__main__":
   parser.add_argument("--dtype", default="auto", choices=["auto", "half", "bfloat16", "float32"])
   parser.add_argument("--max-lora-rank", type=int, default=32)
   parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
-  parser.add_argument("--enforce-eager", action="store_true", help="disable CUDA graphs (slower, less memory)")
   main(parser.parse_args())
