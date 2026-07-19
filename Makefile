@@ -1,6 +1,7 @@
 SHELL := /bin/sh
 
 MYPY_CONFIG := $(CURDIR)/pyproject.toml
+DEPENDENCY_GROUPS := data train evaluate
 TEX_DIRS := proposal pres
 TEX_MAIN ?= main
 
@@ -37,6 +38,23 @@ ruff: ruff-format ruff-lint ## Run all ruff validation checks.
 .PHONY: mypy
 mypy: ## Run mypy over the Python sources.
 	uv run mypy --config-file "$(MYPY_CONFIG)" .
+
+.PHONY: requirements
+requirements: $(DEPENDENCY_GROUPS:%=requirements-%.txt) ## Export the locked dependencies per job group.
+
+requirements-%.txt: pyproject.toml uv.lock
+	uv export --quiet --frozen --no-hashes --no-emit-project --no-annotate --no-header --no-default-groups --group $* \
+		| uv run --quiet python -c 'import sys; \
+		from packaging.requirements import Requirement; \
+		environment = {"sys_platform": "linux", "platform_system": "Linux", "os_name": "posix", \
+		               "platform_machine": "x86_64", "platform_python_implementation": "CPython", \
+		               "implementation_name": "cpython", "python_version": "3.12", \
+		               "python_full_version": "3.12.13"}; \
+		provided = {"torch", "torchvision", "torchaudio", "triton"}; \
+		keep = lambda r: r.name not in provided and not r.name.startswith(("nvidia-", "cuda-")) and (r.marker is None or r.marker.evaluate(environment)); \
+		requirements = map(Requirement, filter(None, map(str.strip, sys.stdin))); \
+		print("\n".join(str(r).split(";")[0].strip() for r in filter(keep, requirements)))' \
+		> $@
 
 .PHONY: pdf
 pdf: ## Compile every LaTeX document into its PDF.

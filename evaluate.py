@@ -8,54 +8,22 @@ from random import Random
 from typing import Any
 
 import nltk
+import torch
 import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
-from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
-from vllm.inputs import TokensPrompt
-from vllm.lora.request import LoRARequest
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from wandb.sdk.wandb_run import Run
 
-from common import EXTRACTABLE_LABELS, MANIFEST_NAME, Row, build_version, sha256_file
 from ifeval import instructions_registry
-
-SCRIPT = Path(__file__).resolve()
 
 log = logging.getLogger("evaluate")
 
-TRUTHFULQA_REPO = "truthfulqa/truthful_qa"
-IFEVAL_REPO = "google/IFEval"
 
-SUBSAMPLE_SEED = 0
-
-
-def subsample(rows: list[Row], limit: int | None) -> list[Row]:
-  if limit is None or limit >= len(rows):
-    return rows
-  rows = list(rows)
-  Random(SUBSAMPLE_SEED).shuffle(rows)
-  return rows[:limit]
-
-
-class Corpus:
-  def __init__(self, run: Any, alias: str) -> None:
-    self.run, self.alias = run, alias
-    manifest_dir = Path(run.use_artifact(f"manifest:{alias}", type="manifest").download())
-    self.manifest = json.loads((manifest_dir / MANIFEST_NAME).read_text())
-    log.info(f"corpus: manifest:{alias} built from {self.manifest['build_version']['git_commit'][:12]}")
-
-  def split(self, name: str) -> list[Row]:
-    artifact = self.run.use_artifact(f"{name}:{self.alias}", type="dataset")
-    path = Path(artifact.download()) / f"{name}.json"
-
-    expected = self.manifest["splits"][name]["sha256"]
-    actual = sha256_file(path)
-    if actual != expected:
-      raise RuntimeError(f"{name}: artifact sha256 {actual} does not match the manifest's {expected}")
-
-    rows: list[Row] = json.loads(path.read_text())
-    log.info(f"corpus: {name} {len(rows)} rows, sha256 verified against the manifest")
-    return rows
+def dataset(run: Run, ref: str) -> Any:
+  """Download dataset artifact `ref` (NAME:VERSION) and load the single JSON file it holds."""
+  return json.loads(next(Path(run.use_artifact(ref, type="dataset").download()).glob("*.json")).read_text())
 
 
 def normalize(text: str) -> str:
@@ -63,20 +31,14 @@ def normalize(text: str) -> str:
 
 
 class Model:
-  def __init__(self, args: Namespace) -> None:
-    self.tokenizer = AutoTokenizer.from_pretrained(args.model)
-    self.engine = LLM(
-      model=args.model,
-      seed=args.seed,
-      dtype=args.dtype,
-      enable_lora=args.lora is not None,
-      max_lora_rank=args.max_lora_rank,
-      gpu_memory_utilization=args.gpu_memory_utilization,
-      max_model_len=args.max_model_len,
-      enforce_eager=args.enforce_eager,
-    )
-    self.lora = LoRARequest("adapter", 1, str(args.lora)) if args.lora else None
-    self.max_tokens = args.max_tokens
+  def __init__(self, name: str, lora: Path | None, dtype: str, max_tokens: int, batch: int) -> None:
+    self.tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
+    if self.tokenizer.pad_token_id is None:
+      self.tokenizer.pad_token = self.tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(name, dtype=getattr(torch, dtype)).to("cuda")  # type: ignore[arg-type]
+    self.model = (PeftModel.from_pretrained(model, str(lora)) if lora else model).eval()
+    self.max_tokens = max_tokens
+    self.batch = batch
 
   def prompt_ids(self, instruction: str) -> list[int]:
     ids = self.tokenizer.apply_chat_template(
@@ -89,31 +51,48 @@ class Model:
     return list(ids)
 
   def generate(self, instructions: list[str]) -> list[str]:
-    params = SamplingParams(temperature=0.0, max_tokens=self.max_tokens)
-    prompts = [TokensPrompt(prompt_token_ids=self.prompt_ids(text)) for text in instructions]
-    outputs = self.engine.generate(prompts, params, lora_request=self.lora)
-    return [output.outputs[0].text.strip() for output in outputs]
+    outputs = []
+    for start in range(0, len(instructions), self.batch):
+      chunk = [self.prompt_ids(text) for text in instructions[start : start + self.batch]]
+      width = max(len(ids) for ids in chunk)
+      pad = self.tokenizer.pad_token_id
+      input_ids = torch.tensor([[pad] * (width - len(ids)) + ids for ids in chunk], device="cuda")
+      mask = torch.tensor([[0] * (width - len(ids)) + [1] * len(ids) for ids in chunk], device="cuda")
+      with torch.no_grad():
+        generated = self.model.generate(
+          input_ids=input_ids,
+          attention_mask=mask,
+          max_new_tokens=self.max_tokens,
+          do_sample=False,
+          pad_token_id=pad,
+        )
+      outputs += self.tokenizer.batch_decode(generated[:, width:], skip_special_tokens=True)
+    return [text.strip() for text in outputs]
 
   def choice_logprobs(self, contexts: list[str], choices: list[list[str]]) -> list[list[float]]:
-    prompts, spans = [], []
+    pairs, spans = [], []
     for context, options in zip(contexts, choices, strict=True):
       context_ids = self.prompt_ids(context)
       for option in options:
         option_ids = self.tokenizer.encode(option, add_special_tokens=False)
-        prompts.append(TokensPrompt(prompt_token_ids=context_ids + option_ids))
+        pairs.append(context_ids + option_ids)
         spans.append((len(context_ids), len(option_ids)))
 
-    params = SamplingParams(temperature=0.0, max_tokens=1, prompt_logprobs=0)
-    outputs = self.engine.generate(prompts, params, lora_request=self.lora)
-
     totals = []
-    for output, (start, length) in zip(outputs, spans, strict=True):
-      logprobs = output.prompt_logprobs
-      total = 0.0
-      for position in range(start, start + length):
-        entry = logprobs[position]
-        total += next(iter(entry.values())).logprob
-      totals.append(total)
+    for start in range(0, len(pairs), self.batch):
+      chunk = pairs[start : start + self.batch]
+      width = max(len(ids) for ids in chunk)
+      pad = self.tokenizer.pad_token_id
+      input_ids = torch.tensor([ids + [pad] * (width - len(ids)) for ids in chunk], device="cuda")
+      mask = torch.tensor([[1] * len(ids) + [0] * (width - len(ids)) for ids in chunk], device="cuda")
+      with torch.no_grad():
+        logprobs = self.model(input_ids=input_ids, attention_mask=mask).logits.float().log_softmax(-1)
+      for row, ids in enumerate(chunk):
+        context_length, option_length = spans[start + row]
+        total = 0.0
+        for position in range(context_length, context_length + option_length):
+          total += float(logprobs[row, position - 1, ids[position]])
+        totals.append(total)
 
     scores, cursor = [], 0
     for options in choices:
@@ -122,8 +101,8 @@ class Model:
     return scores
 
 
-def eval_truthfulqa(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(TRUTHFULQA_REPO, "multiple_choice", split="validation")), limit)
+def eval_truthfulqa(model: Model, repo: str) -> dict[str, Any]:
+  rows = list(load_dataset(repo, "multiple_choice", split="validation"))
   log.info(f"truthfulqa: {len(rows)} questions")
 
   contexts = [row["question"] for row in rows]
@@ -149,8 +128,8 @@ def eval_truthfulqa(model: Model, _: Corpus, limit: int | None) -> dict[str, Any
   }
 
 
-def eval_ifeval(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(list(load_dataset(IFEVAL_REPO, split="train")), limit)
+def eval_ifeval(model: Model, repo: str) -> dict[str, Any]:
+  rows = list(load_dataset(repo, split="train"))
   log.info(f"ifeval: {len(rows)} prompts")
 
   responses = model.generate([row["prompt"] for row in rows])
@@ -178,18 +157,18 @@ def eval_ifeval(model: Model, _: Corpus, limit: int | None) -> dict[str, Any]:
   }
 
 
-def eval_entity_fidelity(model: Model, corpus: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(corpus.split("nemotron_probe"), limit)
-
+def eval_entity_fidelity(
+  model: Model, labels_map: dict[str, str], probe: list[dict[str, Any]], seed: int
+) -> dict[str, Any]:
   asked, golds, texts = [], [], []
-  for row in rows:
-    rng = Random(f"{SUBSAMPLE_SEED}-{row['example_id']}")
-    labels = sorted({span["label"] for span in row["spans"]} & EXTRACTABLE_LABELS.keys())
+  for row in probe:
+    rng = Random(f"{seed}-{row['example_id']}")
+    labels = sorted({span["label"] for span in row["spans"]} & labels_map.keys())
     if not labels:
       continue
     label = rng.choice(labels)
     values = list(dict.fromkeys(span["text"] for span in row["spans"] if span["label"] == label))
-    asked.append(f"Extract the {EXTRACTABLE_LABELS[label]} from the following record.\n\n{row['text']}")
+    asked.append(f"Extract the {labels_map[label]} from the following record.\n\n{row['text']}")
     golds.append(values)
     texts.append(row["text"])
   log.info(f"entity_fidelity: {len(asked)} held-out records")
@@ -218,11 +197,9 @@ def eval_entity_fidelity(model: Model, corpus: Corpus, limit: int | None) -> dic
   }
 
 
-def eval_entity_leakage(model: Model, corpus: Corpus, limit: int | None) -> dict[str, Any]:
-  rows = subsample(corpus.split("nemotron_leak"), limit)
-
+def eval_entity_leakage(model: Model, leak: list[dict[str, Any]]) -> dict[str, Any]:
   asked, golds = [], []
-  for row in rows:
+  for row in leak:
     text = row["text"]
     cut = len(text) // 2
     hidden = list(dict.fromkeys(span["text"] for span in row["spans"] if span["start"] >= cut))
@@ -251,14 +228,6 @@ def eval_entity_leakage(model: Model, corpus: Corpus, limit: int | None) -> dict
   }
 
 
-TASKS = {
-  "truthfulqa": eval_truthfulqa,
-  "ifeval": eval_ifeval,
-  "entity_fidelity": eval_entity_fidelity,
-  "entity_leakage": eval_entity_leakage,
-}
-
-
 def main(args: Namespace) -> None:
   load_dotenv()
 
@@ -268,27 +237,36 @@ def main(args: Namespace) -> None:
     log.info("downloading the nltk punkt_tab tokenizer")
     nltk.download("punkt_tab", quiet=True)
 
-  config = {
-    "model": args.model,
-    "lora": str(args.lora) if args.lora else None,
-    "seed": args.seed,
-    "limit": args.limit,
-    "max_tokens": args.max_tokens,
-    "tasks": args.tasks,
-    "corpus_alias": args.corpus,
-    **build_version(SCRIPT),
-  }
-  # The engine is built before wandb.init(). vLLM forks an EngineCore child, and
-  # a child forked from a process with a live wandb run inherits its threads and
-  # service connection: a wandb weakref finalizer then fires inside the child and
-  # deadlocks it on a future that never resolves, leaving the parent waiting in
-  # wait_for_engine_startup forever. Forking first keeps the child clean.
-  model = Model(args)
+  adapter = wandb.Api().artifact(args.lora, type="model") if args.lora else None
+  lora = Path(adapter.download()) if adapter else None
+  if adapter:
+    log.info(f"adapter: {args.lora} {adapter.metadata} downloaded to {lora}")
 
-  with wandb.init(job_type="evaluate", name=args.run, config=config) as run:
-    corpus = Corpus(run, args.corpus)
+  model = Model(args.model, lora, args.dtype, args.max_tokens, args.batch_size)
 
-    metrics = {name: TASKS[name](model, corpus, args.limit) for name in args.tasks}
+  with wandb.init(
+    job_type="evaluate",
+    config={
+      "model": args.model,
+      "lora": args.lora,
+      "mechanism": adapter.metadata["mechanism"] if adapter else "base",
+      "level": adapter.metadata["level"] if adapter else 0.0,
+      "labels": args.labels,
+      "probe": args.probe,
+      "leak": args.leak,
+      "seed": args.seed,
+      "max_tokens": args.max_tokens,
+      "batch_size": args.batch_size,
+    },
+  ) as run:
+    if args.lora:
+      run.use_artifact(args.lora, type="model")
+    metrics = {
+      "truthfulqa": eval_truthfulqa(model, args.truthfulqa_repo),
+      "ifeval": eval_ifeval(model, args.ifeval_repo),
+      "entity_fidelity": eval_entity_fidelity(model, dataset(run, args.labels), dataset(run, args.probe), args.seed),
+      "entity_leakage": eval_entity_leakage(model, dataset(run, args.leak)),
+    }
     for name, values in metrics.items():
       log.info(f"{name}: {values}")
       for key, value in values.items():
@@ -301,16 +279,14 @@ if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
   parser = ArgumentParser(description="Evaluate one model (optionally a LoRA adapter) on the alignment suite.")
   parser.add_argument("--model", required=True, help="base model, a HuggingFace id or local path")
-  parser.add_argument("--lora", type=Path, default=None, help="LoRA adapter directory; omit for the untuned model")
-  parser.add_argument("--run", required=True, help="name for this run in wandb")
-  parser.add_argument("--corpus", default="latest", help="alias of the gendata artifacts to evaluate against")
-  parser.add_argument("--tasks", nargs="+", choices=sorted(TASKS), default=sorted(TASKS))
-  parser.add_argument("--limit", type=int, default=None, help="evaluate only N items per task (smoke test)")
+  parser.add_argument("--lora", default=None, help="adapter model artifact NAME:VERSION logged by train.py")
+  parser.add_argument("--labels", default="labels:latest", help="extractable-label map artifact NAME:VERSION")
+  parser.add_argument("--probe", default="nemotron_probe:latest", help="entity-fidelity probe artifact NAME:VERSION")
+  parser.add_argument("--leak", default="nemotron_leak:latest", help="leakage probe artifact NAME:VERSION")
   parser.add_argument("--seed", type=int, default=0)
+  parser.add_argument("--truthfulqa-repo", default="truthfulqa/truthful_qa", help="Hugging Face repo for TruthfulQA")
+  parser.add_argument("--ifeval-repo", default="google/IFEval", help="Hugging Face repo for IFEval")
   parser.add_argument("--max-tokens", type=int, default=768)
-  parser.add_argument("--max-model-len", type=int, default=4096)
-  parser.add_argument("--dtype", default="auto", choices=["auto", "half", "bfloat16", "float32"])
-  parser.add_argument("--max-lora-rank", type=int, default=32)
-  parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
-  parser.add_argument("--enforce-eager", action="store_true", help="disable CUDA graphs (slower, less memory)")
+  parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+  parser.add_argument("--batch-size", type=int, default=64, help="sequences per forward pass")
   main(parser.parse_args())

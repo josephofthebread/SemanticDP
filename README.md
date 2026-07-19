@@ -1,6 +1,6 @@
 # Semantic Differential Privacy
 
-Copyright (c) 2026 The Project Authors. Licensed after MIT license.
+Copyright (C) 2026, Dmitry Scherbakov. Licensed after MIT license. All rights reserved.
 
 ## Generic information
 - Most recent version of research proposal: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/proposal.zip).
@@ -8,21 +8,23 @@ Copyright (c) 2026 The Project Authors. Licensed after MIT license.
 - Most recent version of the paper: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/paper.zip).
 - Wandb (experiments): <https://wandb.ai/josephofthebread/SemanticDP/overview>.
 
-## Data generation
-Use `./gendata.py`:
+## Prerequisites
+Before running experiments, setup environment variables:
 ```bash
-./gendata.py --help
+WANDB_ENTITY=josephofthebread
+WANDB_PROJECT=SemanticDP
+DATASPHERE_PROJECT=...  # project ID
+GRPC_VERBOSITY=ERROR    # the CLI forks per submit; gRPC logs every inherited descriptor at INFO
 ```
-Data description:
-| Split | Rows | Spans/row | Role |
-| - | - | - | - |
-| `nemotron_train` | 16,384 | 8.35 | entity-rich adaptation corpus |
-| `nemotron_probe` | 375 | 8.18 | held-out entity-fidelity probe |
-| `nemotron_leak` | 375 | -- | training records, re-used closed-book for the leakage probe |
-| `alpaca_train` | 16,384 | 0.00 | entity-poor contrast (for H3) |
-
-## Evaluation
-Use `./evaluate.py` (requires `vLLM`):
+Prepare configurations:
 ```bash
-./evaluate.py --model Qwen/Qwen3-1.7B --run smoke --limit 20
+uv tool install datasphere
+source .env
+make requirements
+```
+
+## Data and embeddings generation
+```bash
+datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/genglove.yaml
+datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/gendata.yaml
 ```

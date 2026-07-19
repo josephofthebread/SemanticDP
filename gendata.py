@@ -1,25 +1,42 @@
 #! /usr/bin/env python
 import json
 import logging
+import math
+import re
 from argparse import ArgumentParser, Namespace
 from ast import literal_eval
+from functools import cache
+from itertools import product
 from pathlib import Path
 from random import Random
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import numpy as np
 import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
-
-from common import EXTRACTABLE_LABELS, MANIFEST_PATH, Row, Span, build_version, sha256_file
-
-SCRIPT = Path(__file__).resolve()
+from wandb.sdk.wandb_run import Run
 
 log = logging.getLogger("gendata")
 
-NEMOTRON_REPO = "nvidia/Nemotron-PII"
-ALPACA_REPO = "tatsu-lab/alpaca"
+EXTRACTABLE_LABELS = {
+  "first_name": "patient's first name",
+  "last_name": "patient's last name",
+  "date_of_birth": "date of birth",
+  "medical_record_number": "medical record number",
+  "health_plan_beneficiary_number": "health plan beneficiary number",
+  "phone_number": "phone number",
+  "email": "email address",
+  "date": "date",
+  "time": "time",
+  "age": "age",
+  "street_address": "street address",
+  "employee_id": "employee ID",
+  "certificate_license_number": "certificate or license number",
+  "account_number": "account number",
+  "customer_id": "customer ID",
+}
 
 BIOMEDICAL_DOMAINS = frozenset(
   {
@@ -32,12 +49,12 @@ BIOMEDICAL_DOMAINS = frozenset(
 )
 
 
-def parse_spans(row: Row) -> list[Span]:
+def parse_spans(row: dict[str, Any]) -> list[dict[str, Any]]:
   text = row["text"]
   spans = row.get("spans", "[]")
   if isinstance(spans, str):
     spans = literal_eval(spans)
-  parsed: list[Span] = []
+  parsed: list[dict[str, Any]] = []
   for span in spans:
     gold = str(span["text"])
     surface = text[span["start"] : span["end"]]
@@ -45,7 +62,7 @@ def parse_spans(row: Row) -> list[Span]:
   return parsed
 
 
-def template_extract(row: Row, rng: Random) -> Row | None:
+def template_extract(row: dict[str, Any], rng: Random) -> dict[str, Any] | None:
   candidates = sorted({span["label"] for span in row["spans"]} & EXTRACTABLE_LABELS.keys())
   if not candidates:
     return None
@@ -61,7 +78,7 @@ def template_extract(row: Row, rng: Random) -> Row | None:
   }
 
 
-def template_draft(row: Row, _: Random) -> Row | None:
+def template_draft(row: dict[str, Any], _: Random) -> dict[str, Any] | None:
   return {
     "instruction": f"Draft a {row['document_type']} for the {row['domain']} domain.",
     "input": row["document_description"],
@@ -72,7 +89,7 @@ def template_draft(row: Row, _: Random) -> Row | None:
   }
 
 
-def template_classify(row: Row, _: Random) -> Row | None:
+def template_classify(row: dict[str, Any], _: Random) -> dict[str, Any] | None:
   return {
     "instruction": "Identify the document type of the following record.",
     "input": row["text"],
@@ -86,7 +103,7 @@ def template_classify(row: Row, _: Random) -> Row | None:
 TEMPLATES = [template_extract, template_draft, template_classify]
 
 
-def instructionize(row: Row, rng: Random) -> Row | None:
+def instructionize(row: dict[str, Any], rng: Random) -> dict[str, Any] | None:
   for template in rng.sample(TEMPLATES, len(TEMPLATES)):
     example = template(row, rng)
     if example is not None:
@@ -97,7 +114,7 @@ def instructionize(row: Row, rng: Random) -> Row | None:
   return None
 
 
-def record(row: Row, example_id: str) -> Row:
+def record(row: dict[str, Any], example_id: str) -> dict[str, Any]:
   """A Nemotron document in record form, for the probes that score gold spans."""
   return {
     "example_id": example_id,
@@ -109,8 +126,8 @@ def record(row: Row, example_id: str) -> Row:
   }
 
 
-def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
-  dataset = load_dataset(NEMOTRON_REPO)
+def build_nemotron(args: Namespace) -> dict[str, list[dict[str, Any]]]:
+  dataset = load_dataset(args.nemotron_repo)
   rows = [row for split in dataset for row in dataset[split]]
   log.info(f"nemotron: {len(rows)} rows scanned")
 
@@ -120,7 +137,7 @@ def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   curated = [{**row, "spans": spans} for row in rows if (spans := parse_spans(row)) and row.get("text")]
   log.info(f"nemotron: {len(curated)} rows with at least one gold span")
 
-  groups: dict[str, list[Row]] = {}
+  groups: dict[str, list[dict[str, Any]]] = {}
   for row in curated:
     groups.setdefault(row["uid"], []).append(row)
   uids = sorted(groups)
@@ -151,8 +168,8 @@ def build_nemotron(args: Namespace) -> dict[str, list[Row]]:
   return {"nemotron_train": train, "nemotron_probe": probe, "nemotron_leak": leak}
 
 
-def build_alpaca(args: Namespace) -> dict[str, list[Row]]:
-  rows = list(load_dataset(ALPACA_REPO, split="train"))
+def build_alpaca(args: Namespace) -> dict[str, list[dict[str, Any]]]:
+  rows = list(load_dataset(args.alpaca_repo, split="train"))
   log.info(f"alpaca: {len(rows)} rows scanned")
 
   rows = [row for row in rows if row["instruction"].strip() and row["output"].strip()]
@@ -179,7 +196,73 @@ def build_alpaca(args: Namespace) -> dict[str, list[Row]]:
   return {"alpaca_train": train}
 
 
-def entity_stats(rows: list[Row]) -> dict[str, Any]:
+def M1(text: str, p: float, key: str, vocab: list[str]) -> str:
+  tokens = text.split()
+  for i in range(len(tokens)):
+    if Random(f"{key}:{i}").random() < p:
+      tokens[i] = Random(f"{key}:{i}:pick").choice(vocab)
+  return " ".join(tokens)
+
+
+class Tem:
+  WORD = re.compile(r"[A-Za-z]+|[^A-Za-z]+")
+
+  def __init__(self, path: Path, gamma: float) -> None:
+    lines = path.read_text().splitlines()
+    self.words = [line[: line.index(" ")] for line in lines]
+    self.index = {word: i for i, word in enumerate(self.words)}
+    self.matrix = np.array([line.split(" ")[1:] for line in lines], dtype=np.float32)
+    self.norm2 = (self.matrix * self.matrix).sum(1)
+    self.gamma = gamma
+
+  @cache
+  def sample(self, word: str, eps: float) -> tuple[list[int], Any, set[int]]:
+    x = self.matrix[self.index[word]]
+    dist = np.sqrt(np.maximum(self.norm2 + float(x @ x) - 2.0 * (self.matrix @ x), 0.0))
+    near = np.where(dist <= self.gamma)[0]
+    far = len(dist) - len(near)
+    logits = list((eps / 2.0) * -dist[near])
+    candidates = list(map(int, near))
+    if far > 0:
+      logits.append((eps / 2.0) * (-self.gamma + (2.0 / eps) * math.log(far)))
+      candidates.append(-1)
+    weights = np.exp(np.array(logits) - max(logits))
+    return candidates, np.cumsum(weights / weights.sum()), set(map(int, near))
+
+  def sanitize(self, text: str, eps: float, key: str) -> str:
+    out = []
+    for i, part in enumerate(self.WORD.findall(text)):
+      lower = part.lower()
+      if not part.isalpha() or lower not in self.index:
+        out.append(part)
+        continue
+      candidates, cum, near = self.sample(lower, eps)
+      rng = Random(f"{key}:{i}")
+      chosen = candidates[min(int(np.searchsorted(cum, rng.random())), len(candidates) - 1)]
+      if chosen == -1:
+        chosen = rng.randrange(len(self.words))
+        while chosen in near:
+          chosen = rng.randrange(len(self.words))
+      sub = self.words[chosen]
+      if part.isupper():
+        sub = sub.upper()
+      elif part[:1].isupper():
+        sub = sub.capitalize()
+      out.append(sub)
+    return "".join(out)
+
+
+def publish(run: Run, staging: Path, name: str, payload: Any, metadata: dict[str, Any]) -> None:
+  """Write payload to `{name}.json` under staging and log it as a dataset artifact."""
+  path = staging / f"{name}.json"
+  path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+  artifact = wandb.Artifact(name=name, type="dataset", metadata=metadata)
+  artifact.add_file(str(path))
+  run.log_artifact(artifact)
+  log.info(f"wandb: logged artifact {name} ({metadata})")
+
+
+def entity_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
   counts: dict[str, int] = {}
   for row in rows:
     for span in row["spans"]:
@@ -196,62 +279,81 @@ def entity_stats(rows: list[Row]) -> dict[str, Any]:
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  config = {
-    "seed": args.seed,
-    "train_n": args.train_n,
-    "probe_n": args.probe_n,
-    "leak_n": args.leak_n,
-    "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
-    "nemotron_repo": NEMOTRON_REPO,
-    "alpaca_repo": ALPACA_REPO,
-  }
-  version = build_version(SCRIPT)
+  levels = {"m1": args.m1, "m2": args.m2}
 
-  with wandb.init(job_type="gendata", config={**config, **version}) as run, TemporaryDirectory() as staging:
+  with (
+    wandb.init(
+      job_type="gendata",
+      config={
+        "seed": args.seed,
+        "train_n": args.train_n,
+        "probe_n": args.probe_n,
+        "leak_n": args.leak_n,
+        "biomedical_domains": sorted(BIOMEDICAL_DOMAINS),
+        "nemotron_repo": args.nemotron_repo,
+        "alpaca_repo": args.alpaca_repo,
+        "glove": args.glove,
+        "levels": levels,
+        "gamma": args.gamma,
+      },
+    ) as run,
+    TemporaryDirectory() as tmp,
+  ):
+    staging = Path(tmp)
+    glove = run.use_artifact(args.glove, type="embeddings")
+    vectors = next(Path(glove.download()).glob("*.txt"))
+    log.info(f"parsing {vectors.name} ({glove.metadata['vocab_size']} words)")
+    tem = Tem(vectors, args.gamma)
+
     splits = {**build_nemotron(args), **build_alpaca(args)}
 
     train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
     probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
     assert not train_uids & probe_uids, "probe records leaked into the training corpus"
 
-    entries: dict[str, Any] = {}
-    artifacts = []
+    corpora = [name for name in splits if name.endswith("_train")]
     for name, rows in splits.items():
-      path = Path(staging) / f"{name}.json"
-      path.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
-      entries[name] = {"sha256": sha256_file(path), **entity_stats(rows)}
-      log.info(f"staged {name}: {entries[name]['n_rows']} rows, sha256 {entries[name]['sha256'][:12]}")
+      publish(run, staging, name, rows, entity_stats(rows))
+    publish(run, staging, "labels", EXTRACTABLE_LABELS, {"n_labels": len(EXTRACTABLE_LABELS)})
 
-      artifact = wandb.Artifact(
-        name=name,
-        type="dataset",
-        description=f"Frozen {name} split for the privacy-mechanism grid.",
-        metadata=entries[name],
-      )
-      artifact.add_file(str(path))
-      artifacts.append(artifact)
+    vocab = {
+      split: sorted({token for row in splits[split] for field in ["input", "output"] for token in row[field].split()})
+      for split in corpora
+    }
+    jobs = [(mechanism, level) for mechanism, values in levels.items() for level in values]
 
-    manifest = {"build_version": version, "config": config, "splits": entries}
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    log.info(f"wrote {MANIFEST_PATH}")
+    for split, (mechanism, level) in product(corpora, jobs):
+      perturbed = []
+      for row in splits[split]:
+        new = dict(row)
+        for field in ["input", "output"]:
+          key = f"{args.seed}:{split}:{mechanism}:{level}:{row['example_id']}:{field}"
+          text = row[field]
+          new[field] = M1(text, level, key, vocab[split]) if mechanism == "m1" else tem.sanitize(text, level, key)
+        perturbed.append(new)
 
-    index = wandb.Artifact(
-      name="manifest", type="manifest", description="Hashes and build version of every split.", metadata=manifest
-    )
-    index.add_file(str(MANIFEST_PATH))
-
-    for artifact in [*artifacts, index]:
-      run.log_artifact(artifact)
-      log.info(f"wandb: logged artifact {artifact.name}")
+      suffix = f"p{int(level * 100):02d}" if mechanism == "m1" else f"eps{int(level)}"
+      metadata = {"mechanism": mechanism, "level": level, "parent": split, "n_rows": len(perturbed)}
+      publish(run, staging, f"{split}_{mechanism}_{suffix}", perturbed, metadata)
 
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
-  parser = ArgumentParser(description="Build the frozen adaptation corpora for the privacy-mechanism grid.")
+  parser = ArgumentParser(description="Build every corpus of the privacy-mechanism grid: clean, M1 and M2.")
   parser.add_argument("--seed", type=int, default=0)
+  parser.add_argument("--nemotron-repo", default="nvidia/Nemotron-PII", help="Hugging Face repo for the PII corpus")
+  parser.add_argument("--alpaca-repo", default="tatsu-lab/alpaca", help="Hugging Face repo for the generic corpus")
   parser.add_argument("--train-n", type=int, default=16384, help="train rows per corpus")
   parser.add_argument("--probe-n", type=int, default=375, help="held-out entity-fidelity probe records")
   parser.add_argument(
     "--leak-n", type=int, default=375, help="training records re-used for the closed-book leakage probe"
   )
+  parser.add_argument("--glove", default="glove:latest", help="GloVe embeddings artifact NAME:VERSION")
+  parser.add_argument(
+    "--m1", type=lambda v: [float(x) for x in v.split(",")], default=[0.05, 0.15, 0.30, 0.50], help="M1 rates p"
+  )
+  parser.add_argument(
+    "--m2", type=lambda v: [float(x) for x in v.split(",")], default=[1.0, 3.0, 6.0, 12.0], help="M2 budgets epsilon"
+  )
+  parser.add_argument("--gamma", type=float, default=5.0, help="TEM truncation radius in GloVe space")
   main(parser.parse_args())
