@@ -33,6 +33,53 @@ def parse_lora(lora: object) -> dict[str, Any]:
   }
 
 
+def annotate(runs: pd.DataFrame, job: str, corpus_s: pd.DataFrame, generation_s: pd.DataFrame) -> pd.DataFrame:
+  frame = runs[runs.job == job].reset_index(drop=True)
+  parsed = pd.DataFrame(
+    [parse_lora(lora) for lora in frame["cfg.lora"]], columns=["corpus", "arm", "train_seed", "dp_eps"]
+  )
+  frame = pd.concat([frame, parsed], axis=1)
+  frame["model"] = frame["cfg.model"].str.split("/").str[-1]
+  frame["mechanism"] = frame["cfg.mechanism"]
+  frame["level"] = pd.to_numeric(frame["cfg.level"], errors="coerce")
+  frame["d"] = [
+    {
+      ("m1", 0.5): 1,
+      ("m1", 0.3): 2,
+      ("m1", 0.15): 3,
+      ("m1", 0.05): 4,
+      ("m2", 1.0): 1,
+      ("m2", 3.0): 2,
+      ("m2", 6.0): 3,
+      ("m2", 12.0): 4,
+      ("m3", 1.0): 1,
+      ("m3", 4.0): 2,
+      ("m3", 8.0): 3,
+      ("m3", 16.0): 4,
+    }.get(key, np.nan)
+    for key in zip(frame.mechanism, frame.level)
+  ]
+  frame["stem"] = frame["cfg.lora"].str.split(":").str[0].str.removeprefix("adapter-")
+  frame = frame.merge(corpus_s, on=["corpus", "arm"], how="left").merge(generation_s, on="stem", how="left")
+  frame.loc[frame.mechanism.isin(["m0", "m3", "base"]), ["S_corpus", "S_ent", "S_gen"]] = 0.0
+  return frame
+
+
+def against_m0(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+  present = [column for column in columns if column in frame]
+  baseline = (
+    frame[frame.mechanism == "m0"]
+    .groupby(["corpus", "model"])[present]
+    .mean()
+    .rename(columns={column: f"m0.{column}" for column in present})
+    .reset_index()
+  )
+  frame = frame.merge(baseline, on=["corpus", "model"], how="left")
+  for column in present:
+    frame[f"drop.{column}"] = frame[f"m0.{column}"] - frame[column]
+  return frame
+
+
 def main() -> None:
   load_dotenv()
   Path("results").mkdir(exist_ok=True)
@@ -74,44 +121,17 @@ def main() -> None:
   )
   log.info(f"distortion: {len(corpus_s)} arms, {len(generation_s)} runs")
 
-  evaluate = runs[runs.job == "evaluate"].reset_index(drop=True)
-  evaluate = pd.concat([evaluate, pd.DataFrame([parse_lora(x) for x in evaluate["cfg.lora"]])], axis=1)
-  evaluate["model"] = evaluate["cfg.model"].str.split("/").str[-1]
-  evaluate["mechanism"] = evaluate["cfg.mechanism"]
-  evaluate["level"] = pd.to_numeric(evaluate["cfg.level"], errors="coerce")
-  evaluate["d"] = [
-    {
-      ("m1", 0.5): 1,
-      ("m1", 0.3): 2,
-      ("m1", 0.15): 3,
-      ("m1", 0.05): 4,
-      ("m2", 1.0): 1,
-      ("m2", 3.0): 2,
-      ("m2", 6.0): 3,
-      ("m2", 12.0): 4,
-      ("m3", 1.0): 1,
-      ("m3", 4.0): 2,
-      ("m3", 8.0): 3,
-      ("m3", 16.0): 4,
-    }.get(key, np.nan)
-    for key in zip(evaluate.mechanism, evaluate.level)
-  ]
-  evaluate["stem"] = evaluate["cfg.lora"].str.split(":").str[0].str.removeprefix("adapter-")
-  evaluate = evaluate.merge(corpus_s, on=["corpus", "arm"], how="left").merge(generation_s, on="stem", how="left")
-  evaluate.loc[evaluate.mechanism.isin(["m0", "m3", "base"]), ["S_corpus", "S_ent", "S_gen"]] = 0.0
-
   COMPONENTS = ["ifeval/prompt_accuracy", "entity_fidelity/correct", "truthfulqa/mc1"]
+  SAFETY = [
+    "advbench/refusal_rate",
+    "xstest/safe_refusal_rate",
+    "xstest/unsafe_refusal_rate",
+    "xstest/discrimination",
+  ]
 
-  baseline = (
-    evaluate[evaluate.mechanism == "m0"]
-    .groupby(["corpus", "model"])[COMPONENTS]
-    .mean()
-    .rename(columns={component: f"m0.{component}" for component in COMPONENTS})
-    .reset_index()
-  )
-  evaluate = evaluate.merge(baseline, on=["corpus", "model"], how="left")
-  for component in COMPONENTS:
-    evaluate[f"drop.{component}"] = evaluate[f"m0.{component}"] - evaluate[component]
+  evaluate = against_m0(annotate(runs, "evaluate", corpus_s, generation_s), COMPONENTS)
+  safety = against_m0(annotate(runs, "safety", corpus_s, generation_s), SAFETY)
+  log.info(f"safety: {len(safety)} runs, {sum(column in safety for column in SAFETY)}/{len(SAFETY)} metrics present")
 
   mechanisms = evaluate.mechanism.isin(["m1", "m2", "m3"])
   for component in COMPONENTS:
@@ -128,6 +148,7 @@ def main() -> None:
 
   tables = {
     "evaluate": evaluate,
+    "safety": safety,
     "train": train,
     "distortion": corpus_s,
     "generations": generation_s,

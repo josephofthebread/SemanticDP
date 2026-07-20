@@ -24,9 +24,11 @@
     "nltk",
     "peft",
     "punkt",
+    "pvalues",
     "pyarrow",
     "pyproject",
     "sdist",
+    "sharey",
     "Skolkovo",
     "stanfordnlp",
     "tatsu",
@@ -34,6 +36,7 @@
     "truthfulqa",
     "uids",
     "vllm",
-    "xelatex"
+    "xelatex",
+    "xstest"
   ],
 }

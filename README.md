@@ -35,6 +35,7 @@ Every stage runs as a DataSphere job, configured in [_jobs](./_jobs/) folder (ea
   ```bash
   _jobs/deploy.sh train nemotron
   _jobs/deploy.sh evaluate nemotron
+  _jobs/deploy.sh safety nemotron
   ```
 1. score the semantic distortion over every corpus arm and every set of generations:
   ```bash

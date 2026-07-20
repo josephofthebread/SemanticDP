@@ -7,7 +7,7 @@ set -a
 source .env
 set +a
 : "${DATASPHERE_PROJECT:?add it to .env}"
-phase=${1:?train or evaluate}
+phase=${1:?train, evaluate or safety}
 corpus=${2:-nemotron}
 runners=${RUNNERS:-9}
 
@@ -24,14 +24,14 @@ for model in "${MODELS[@]}"; do
       if [[ $phase == train ]]; then
         cells+=("train.py --model $model --split $split:latest --seed $seed $TUNED")
       else
-        cells+=("evaluate.py --model $model --lora adapter-${model##*/}-$split-s$seed:latest")
+        cells+=("$phase.py --model $model --lora adapter-${model##*/}-$split-s$seed:latest")
       fi
     done
     for eps in "${EPSILONS[@]}"; do
       if [[ $phase == train ]]; then
         cells+=("train.py --model $model --split ${corpus}_train:latest --seed $seed $TUNED --eps $eps")
       else
-        cells+=("evaluate.py --model $model --lora adapter-${model##*/}-${corpus}_train-s$seed-eps$eps:latest")
+        cells+=("$phase.py --model $model --lora adapter-${model##*/}-${corpus}_train-s$seed-eps$eps:latest")
       fi
     done
   done
