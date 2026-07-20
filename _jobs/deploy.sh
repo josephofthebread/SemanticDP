@@ -7,7 +7,7 @@ set -a
 source .env
 set +a
 : "${DATASPHERE_PROJECT:?add it to .env}"
-phase=${1:?train, evaluate or safety}
+phase=${1:?train, alignment or safety}
 corpus=${2:-nemotron}
 runners=${RUNNERS:-9}
 

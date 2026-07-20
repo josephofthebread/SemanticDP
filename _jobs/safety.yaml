@@ -18,6 +18,5 @@ env:
       - _jobs/pack.py
       - safety.py
       - evaluate.py
-      - ifeval
 cloud-instance-types:
   - g2.1

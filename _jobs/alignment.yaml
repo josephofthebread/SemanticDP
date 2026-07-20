@@ -1,5 +1,5 @@
-name: SemanticDP-evaluate
-desc: Evaluate several adapters, one after another
+name: SemanticDP-alignment
+desc: Measure the alignment suite on several adapters, one after another
 cmd: python3 pack.py
 env:
   docker:
@@ -16,6 +16,7 @@ env:
     requirements-file: requirements-evaluate.txt
     local-paths:
       - _jobs/pack.py
+      - alignment.py
       - evaluate.py
       - ifeval
 cloud-instance-types:
