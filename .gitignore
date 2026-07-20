@@ -106,4 +106,5 @@ main.pdf
 # Weights & Biases
 wandb/
 artifacts/
+results/
 /requirements-*.txt

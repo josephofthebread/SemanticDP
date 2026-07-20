@@ -7,6 +7,7 @@ Copyright (C) 2026, Dmitry Scherbakov. Licensed after MIT license. All rights re
 - Most recent version of pre-defense presentation: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/pres.zip).
 - Most recent version of the paper: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/build/main/paper.zip).
 - Wandb (experiments): <https://wandb.ai/josephofthebread/SemanticDP/overview>.
+- Most recent aggregated results: [download](https://nightly.link/josephofthebread/SemanticDP/workflows/results/main/results.zip).
 
 ## Prerequisites
 Before running experiments, setup environment variables:

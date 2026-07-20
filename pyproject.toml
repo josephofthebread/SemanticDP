@@ -24,10 +24,15 @@ evaluate = [
   "nltk>=3.10.0",
   "transformers>=5.13.1",
 ]
-sdist = [
-  "datasets>=5.0.0",
-  "sentence-transformers>=5.1.2",
-  "torch>=2.10,<2.11",
+sdist = ["datasets>=5.0.0", "sentence-transformers>=5.1.2", "torch>=2.10,<2.11"]
+results = ["pandas>=2.4.0"]
+notebook = [
+  "ipykernel>=7.1.0",
+  "matplotlib>=3.11.0",
+  "pandas>=2.4.0",
+  "pyarrow>=22.0.0",
+  "seaborn>=0.13.2",
+  "statsmodels>=0.14.6",
 ]
 dev = ["mypy>=2.2.0", "ruff>=0.15.21"]
 
