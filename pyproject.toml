@@ -26,6 +26,14 @@ evaluate = [
 ]
 sdist = ["datasets>=5.0.0", "sentence-transformers>=5.1.2", "torch>=2.10,<2.11"]
 results = ["pandas>=2.4.0"]
+poster = [
+  "matplotlib>=3.11.0",
+  "pandas>=2.4.0",
+  "pillow>=11.0.0",
+  "pyphen>=0.17.0",
+  "python-pptx>=1.0.2",
+  "qrcode>=8.0",
+]
 notebook = [
   "ipykernel>=7.1.0",
   "matplotlib>=3.11.0",

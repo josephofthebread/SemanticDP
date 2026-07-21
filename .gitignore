@@ -106,3 +106,6 @@ wandb/
 artifacts/
 results/
 /requirements-*.txt
+
+# Poster
+poster.pptx
