@@ -697,7 +697,9 @@ def set_qr(slide: Slide, label_shape: TextFrame, frame_left: int, frame_top: int
   run.text = "Paper & code"
   run.font.size = Pt(16)
   run.font.color.rgb = INK
-  slide.shapes.add_picture("fig/qr.png", Emu(frame_left) + Cm(0.4), Emu(frame_top) + Cm(0.4), Cm(3.6), Cm(3.6))
+  left = Emu(Emu(frame_left) + Cm(0.4))
+  top = Emu(Emu(frame_top) + Cm(0.4))
+  slide.shapes.add_picture("fig/qr.png", left, top, Cm(3.6), Cm(3.6))
 
 
 def build_poster() -> None:
