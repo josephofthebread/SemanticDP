@@ -21,6 +21,7 @@
     "ipynb",
     "isort",
     "latexmk",
+    "minilm",
     "mixedlm",
     "mypy",
     "ncol",

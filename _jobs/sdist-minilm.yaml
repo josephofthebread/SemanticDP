@@ -1,0 +1,18 @@
+name: SemanticDP-sdist-MiniLM
+desc: Recompute the semantic distortion with a second encoder
+cmd: python3 sdist.py --datasets nemotron alpaca --encoder sentence-transformers/all-MiniLM-L6-v2 --tag minilm
+env:
+  docker:
+    image: docker.io/pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime
+  vars:
+    - PIP_BREAK_SYSTEM_PACKAGES: "1"
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements-sdist.txt
+    local-paths:
+      - sdist.py
+cloud-instance-types:
+  - g2.1

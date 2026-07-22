@@ -133,7 +133,9 @@ def main(args: Namespace) -> None:
     staging = Path(run.dir) / "distortion.json"
     staging.write_text(json.dumps(results, indent=2, sort_keys=True))
     artifact = wandb.Artifact(
-      "distortion", type="distortion", metadata={"encoder": args.encoder, "datasets": args.datasets}
+      f"distortion-{args.tag}" if args.tag else "distortion",
+      type="distortion",
+      metadata={"encoder": args.encoder, "datasets": args.datasets},
     )
     artifact.add_file(str(staging))
     run.log_artifact(artifact)
@@ -144,5 +146,6 @@ if __name__ == "__main__":
   parser = ArgumentParser(description="Compute the semantic distortion score S on training text and on generations.")
   parser.add_argument("--datasets", nargs="+", required=True, help="dataset names, e.g. nemotron alpaca")
   parser.add_argument("--encoder", default="BAAI/bge-base-en-v1.5")
+  parser.add_argument("--tag", default="", help="suffix for the published distortion artifact")
   parser.add_argument("--batch-size", type=int, default=256)
   main(parser.parse_args())
