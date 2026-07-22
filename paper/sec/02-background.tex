@@ -1,6 +1,91 @@
 \section{Background \& Literature Review}
-Language models (LMs) are increasingly adapted using sensitive domain-specific data in social, biomedical, educational, and research settings. Differential privacy (DP) provides a rigorous framework for limiting individual-level privacy leakage through calibrated randomized mechanisms \citep{dwork2006calibrating,dwork2014algorithmic}. In LM adaptation, DP can reduce memorization and leakage, but it also affects optimization, generation behavior, and the semantic fidelity of learned or sanitized text. Much of the private learning literature evaluates this tradeoff primarily through downstream task accuracy or utility. For generative models, however, task utility alone is incomplete: a model may preserve aggregate benchmark performance while becoming less faithful to evidence, less calibrated, more prone to hallucination, or less reliable in following safety and instruction-alignment expectations.
+Language models (LMs) are increasingly adapted using sensitive domain-specific data in social,
+biomedical,
+educational,
+and research settings.
+Differential privacy (DP) provides a rigorous framework for limiting individual-level privacy leakage through calibrated randomized mechanisms \citep{dwork2006calibrating, dwork2014algorithmic}.
+In LM adaptation,
+DP can reduce memorization and leakage,
+but it also affects optimization,
+generation behavior,
+and the semantic fidelity of learned or sanitized text.
+Much of the private learning literature evaluates this tradeoff primarily through downstream task accuracy or utility.
+For generative models,
+however,
+task utility alone is incomplete:
+a model may preserve aggregate benchmark performance while becoming less faithful to evidence,
+less calibrated,
+more prone to hallucination,
+or less reliable in following safety and instruction-alignment expectations.
 
-We study privacy-preserving LM adaptation as a three-way tradeoff among privacy, utility, and alignment. Prior work on text sanitization and metric DP shows that sensitive information can be perturbed while partially preserving semantic structure \citep{chatzikokolakis2013broadening,carvalho2021tem,yue2021differential}. Related work on hallucination and semantic uncertainty argues that reliability failures in LLMs are often better understood at the level of meaning rather than surface token sequences \citep{farquhar2024detecting}. Semantic privacy research further suggests that privacy leakage can be contextual and inferential, not limited to verbatim memorization \citep{ma2025sok}. Together, these lines of work motivate a closer examination of how privacy mechanisms alter task-relevant meaning, and whether such semantic changes translate into factual or behavioral alignment failures.
+We study privacy-preserving LM adaptation as a three-way tradeoff among privacy,
+utility,
+and alignment.
+Prior work on text sanitization and metric DP shows that sensitive information can be perturbed while partially preserving semantic structure \citep{chatzikokolakis2013broadening, carvalho2021tem, yue2021differential}.
+Related work on hallucination and semantic uncertainty argues that reliability failures in LLMs are often better understood at the level of meaning rather than surface token sequences \citep{farquhar2024detecting}.
+Semantic privacy research further suggests that privacy leakage can be contextual and inferential,
+not limited to verbatim memorization \citep{ma2025sok}.
+Together,
+these lines of work motivate a closer examination of how privacy mechanisms alter task-relevant meaning,
+and whether such semantic changes translate into factual or behavioral alignment failures.
 
-Our work differs from prior privacy-utility evaluations by explicitly decomposing the effect of DP mechanisms into direct behavioral effects, semantic distortion, and downstream alignment degradation. Rather than assuming that stronger privacy guarantees monotonically degrade model quality, we ask whether measurable semantic distortion explains alignment failures beyond what is predicted by privacy budget alone. We evaluate several privacy mechanisms, including random token perturbation, semantic text sanitization, and DP-compatible fine-tuning, across truthfulness, hallucination, safety, refusal behavior, helpfulness, and instruction-following tasks, aiming to identify which forms of privacy-induced perturbation are most damaging to aligned generation, and which may be mitigated without abandoning strong privacy guarantees.
+Two features of this literature shape the design of our study.
+First,
+the mechanisms that could likely be deployed for private adaptation do not share a privacy scale.
+DP-SGD attaches an example-level $(\varepsilon, \delta)$ guarantee to the optimization procedure \citep{abadi2016deep, mironov2017renyi},
+whereas embedding-space sanitization attaches a word-level metric-LDP guarantee to the text itself \citep{chatzikokolakis2013broadening, feyisetan2020privacy, yue2021differential}.
+A budget of $\varepsilon = 8$ therefore means something different in each family,
+and a comparison of alignment degradation ``at matched $\varepsilon$'' across families is not well defined.
+Any cross-mechanism account of the cost of privacy consequently needs a second axis that is measurable on a common scale.
+Semantic distortion of the training signal is the natural candidate:
+it is observable,
+mechanism-agnostic,
+and defined without reference to the privacy parameter that produced it.
+
+Second,
+the two families act on different things.
+Sanitization acts on meaning by construction,
+replacing words with embedding-space neighbors;
+DP-SGD leaves the text intact and instead perturbs gradients,
+through per-example clipping that biases the update direction plus noise injected per trainable parameter -- an effect that a low-rank adapter \citep{hu2022lora} concentrates into a small parameter budget.
+Its privacy benefit operates through a different channel,
+suppressing the memorization of rare sequences that extraction attacks target \citep{carlini2021extracting},
+which is precisely where entity-level facts live.
+
+These two pathways predict different failure signatures---corrupted facts against ungrounded generation---and recent work has begun to connect private training directly to hallucination.
+\citet{ramesh2026privacyhallucination} fine-tune a language model under DP-SGD at several budgets and find that factual consistency in open-ended generation falls as the budget tightens,
+that the same unsupported claims recur across generations rather than varying randomly,
+and that the effect is confined to facts acquired during fine-tuning while knowledge already encoded in pre-training is left intact.
+That work establishes the phenomenon and locates it in acquisition rather than retention.
+It does not identify the pathway,
+and says as much,
+attributing the effect provisionally to clipping and additive noise and leaving the question for future work.
+
+Answering it needs something a single-family design cannot supply:
+variation in semantic damage at a fixed privacy level.
+Sweeping $\varepsilon$ within one mechanism confounds privacy with the particular way that mechanism injects noise,
+and offers no way to ask whether DP is special,
+because every arm carries a guarantee.
+We therefore hold the adaptation procedure fixed and vary the mechanism across families,
+add a non-private perturbation control that produces semantic damage with no privacy guarantee attached,
+and report a measured distortion score alongside the nominal budget so that the arms share an axis the budgets themselves do not provide.
+Our dependent variable is judge-free throughout,
+which matters here because factuality metrics built on a language-model verifier inherit that verifier's own alignment properties---the very quantity under study.
+
+Our work differs from prior privacy-utility evaluations by explicitly decomposing the effect of DP mechanisms into direct behavioral effects,
+semantic distortion,
+and downstream alignment degradation.
+Rather than assuming that stronger privacy guarantees monotonically degrade model quality,
+we ask whether measurable semantic distortion explains alignment failures beyond what is predicted by privacy budget alone.
+We evaluate several privacy mechanisms,
+including random token perturbation,
+semantic text sanitization,
+and DP-compatible fine-tuning,
+across truthfulness,
+hallucination,
+safety,
+refusal behavior,
+helpfulness,
+and instruction-following tasks,
+aiming to identify which forms of privacy-induced perturbation are most damaging to aligned generation,
+and which may be mitigated without abandoning strong privacy guarantees.
