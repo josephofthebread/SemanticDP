@@ -75,13 +75,15 @@ def text_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> dict
 def generation_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> dict[str, dict[str, Any]]:
   """S between each adapter's generations and those of its non-private counterpart."""
   api = wandb.Api()
-  names = [c.name for c in api.artifact_type("generations", project=f"{run.entity}/{run.project}").collections()]
+  project = f"{run.entity}/{run.project}"
+  names = [c.name for c in api.artifact_type("generations", project=project).collections()]
   log.info(f"{len(names)} generation artifacts")
 
   def load(name: str) -> dict[tuple[str, str], str]:
-    path = Path(run.use_artifact(f"{name}:latest", type="generations").download())
+    path = Path(api.artifact(f"{project}/{name}:latest", type="generations").download())
     return {(row["task"], row["prompt"]): row["response"] for row in json.loads(next(path.glob("*.json")).read_text())}
 
+  baselines: dict[str, dict[tuple[str, str], str]] = {}
   results = {}
   for name in sorted(names):
     stem = name.removeprefix("generations-")
@@ -99,7 +101,9 @@ def generation_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -
       log.warning(f"{name}: missing non-private reference {reference}")
       continue
 
-    rows, baseline = load(name), load(reference)
+    if reference not in baselines:
+      baselines[reference] = load(reference)
+    rows, baseline = load(name), baselines[reference]
     shared = sorted(rows.keys() & baseline.keys())
     if not shared:
       log.warning(f"{name}: no prompts shared with {reference}")
