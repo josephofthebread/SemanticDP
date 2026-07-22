@@ -13,12 +13,14 @@ from dotenv import load_dotenv
 log = logging.getLogger("results")
 
 ADAPTER = re.compile(
-  r"^adapter-(?P<model>.+?)-(?P<corpus>nemotron|alpaca)_train(?P<arm>.*?)-s(?P<seed>\d+)(?:-eps(?P<eps>\d+))?$"
+  r"^adapter-(?P<model>.+?)-(?P<dataset>nemotron|alpaca)_train(?P<variant>.*?)-s(?P<seed>\d+)"
+  r"(?:-eps(?P<eps>[\d.]+))?(?:-(?P<tag>[a-z][a-z0-9]*))?$"
 )
+FIELDS = ["dataset", "variant", "train_seed", "dp_eps", "tag"]
 
 
 def parse_lora(lora: object) -> dict[str, Any]:
-  empty = {"corpus": None, "arm": None, "train_seed": np.nan, "dp_eps": np.nan}
+  empty = dict.fromkeys(FIELDS, None) | {"train_seed": np.nan, "dp_eps": np.nan}
   if not isinstance(lora, str):
     return empty
   match = ADAPTER.match(lora.split(":")[0])
@@ -26,18 +28,17 @@ def parse_lora(lora: object) -> dict[str, Any]:
     return empty
   groups = match.groupdict()
   return {
-    "corpus": groups["corpus"],
-    "arm": (groups["arm"] or "").lstrip("_") or "clean",
+    "dataset": groups["dataset"],
+    "variant": (groups["variant"] or "").lstrip("_") or "clean",
     "train_seed": int(groups["seed"]),
     "dp_eps": float(groups["eps"]) if groups["eps"] else np.nan,
+    "tag": groups["tag"],
   }
 
 
-def annotate(runs: pd.DataFrame, job: str, corpus_s: pd.DataFrame, generation_s: pd.DataFrame) -> pd.DataFrame:
+def annotate(runs: pd.DataFrame, job: str, text_s: pd.DataFrame, generation_s: pd.DataFrame) -> pd.DataFrame:
   frame = runs[runs.job == job].reset_index(drop=True)
-  parsed = pd.DataFrame(
-    [parse_lora(lora) for lora in frame["cfg.lora"]], columns=["corpus", "arm", "train_seed", "dp_eps"]
-  )
+  parsed = pd.DataFrame([parse_lora(lora) for lora in frame["cfg.lora"]], columns=FIELDS)
   frame = pd.concat([frame, parsed], axis=1)
   frame["model"] = frame["cfg.model"].str.split("/").str[-1]
   frame["mechanism"] = frame["cfg.mechanism"]
@@ -60,8 +61,8 @@ def annotate(runs: pd.DataFrame, job: str, corpus_s: pd.DataFrame, generation_s:
     for key in zip(frame.mechanism, frame.level)
   ]
   frame["stem"] = frame["cfg.lora"].str.split(":").str[0].str.removeprefix("adapter-")
-  frame = frame.merge(corpus_s, on=["corpus", "arm"], how="left").merge(generation_s, on="stem", how="left")
-  frame.loc[frame.mechanism.isin(["m0", "m3", "base"]), ["S_corpus", "S_ent", "S_gen"]] = 0.0
+  frame = frame.merge(text_s, on=["dataset", "variant"], how="left").merge(generation_s, on="stem", how="left")
+  frame.loc[frame.mechanism.isin(["m0", "m3", "base"]), ["S_text", "S_entity", "S_carrier"]] = 0.0
   return frame
 
 
@@ -69,12 +70,12 @@ def against_m0(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
   present = [column for column in columns if column in frame]
   baseline = (
     frame[frame.mechanism == "m0"]
-    .groupby(["corpus", "model"])[present]
+    .groupby(["dataset", "model"])[present]
     .mean()
     .rename(columns={column: f"m0.{column}" for column in present})
     .reset_index()
   )
-  frame = frame.merge(baseline, on=["corpus", "model"], how="left")
+  frame = frame.merge(baseline, on=["dataset", "model"], how="left")
   for column in present:
     frame[f"drop.{column}"] = frame[f"m0.{column}"] - frame[column]
   return frame
@@ -110,16 +111,19 @@ def main() -> None:
 
   directory = Path(api.artifact("josephofthebread/SemanticDP/distortion:latest", type="distortion").download())
   distortion = json.loads(next(directory.glob("*.json")).read_text())
-  corpus_s = pd.DataFrame(
-    [{"corpus": key.split("/")[0], "arm": key.split("/")[1], **values} for key, values in distortion["corpus"].items()]
-  ).rename(columns={"s": "S_corpus", "n": "n_corpus", "s_ent": "S_ent", "s_gen": "S_gen"})
+  text_s = pd.DataFrame(
+    [
+      {"dataset": key.split("/")[0], "variant": key.split("/")[1], **values}
+      for key, values in distortion["datasets"].items()
+    ]
+  ).rename(columns={"s": "S_text", "n": "n_text", "s_entity": "S_entity", "s_carrier": "S_carrier"})
   generation_s = pd.DataFrame(
     [
       {"stem": key, "S_gen_side": values["s"], "n_gen_side": values["n"]}
       for key, values in distortion["generations"].items()
     ]
   )
-  log.info(f"distortion: {len(corpus_s)} arms, {len(generation_s)} runs")
+  log.info(f"distortion: {len(text_s)} variants, {len(generation_s)} adapters")
 
   COMPONENTS = ["ifeval/prompt_accuracy", "entity_fidelity/correct", "truthfulqa/mc1"]
   SAFETY = [
@@ -129,8 +133,8 @@ def main() -> None:
     "xstest/discrimination",
   ]
 
-  evaluate = against_m0(annotate(runs, "evaluate", corpus_s, generation_s), COMPONENTS)
-  safety = against_m0(annotate(runs, "safety", corpus_s, generation_s), SAFETY)
+  evaluate = against_m0(annotate(runs, "evaluate", text_s, generation_s), COMPONENTS)
+  safety = against_m0(annotate(runs, "safety", text_s, generation_s), SAFETY)
   log.info(f"safety: {len(safety)} runs, {sum(column in safety for column in SAFETY)}/{len(SAFETY)} metrics present")
 
   mechanisms = evaluate.mechanism.isin(["m1", "m2", "m3"])
@@ -144,13 +148,13 @@ def main() -> None:
 
   train = runs[runs.job == "train"].reset_index(drop=True)
   train["model"] = train["cfg.model"].str.split("/").str[-1]
-  train["corpus"] = train["cfg.split"].str.split("_").str[0]
+  train["dataset"] = train["cfg.split"].str.split("_").str[0]
 
   tables = {
     "evaluate": evaluate,
     "safety": safety,
     "train": train,
-    "distortion": corpus_s,
+    "distortion": text_s,
     "generations": generation_s,
   }
   for name, table in tables.items():

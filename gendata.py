@@ -196,6 +196,12 @@ def build_alpaca(args: Namespace) -> dict[str, list[dict[str, Any]]]:
   return {"alpaca_train": train}
 
 
+def suffix(mechanism: str, level: float) -> str:
+  if mechanism == "m1":
+    return f"p{int(level * 100):02d}"
+  return f"eps{f'{level:g}'.replace('.', 'p')}"
+
+
 def M1(text: str, p: float, key: str, vocab: list[str]) -> str:
   tokens = text.split()
   for i in range(len(tokens)):
@@ -252,6 +258,19 @@ class Tem:
     return "".join(out)
 
 
+def M2E(row: dict[str, Any], tem: "Tem", eps: float, key: str) -> dict[str, Any]:
+  """Sanitize gold entity spans only, one surrogate per distinct value, carrier text verbatim."""
+  values = sorted({span["text"] for span in row["spans"]}, key=len, reverse=True)
+  mapping = {value: tem.sanitize(value, eps, f"{key}:{value}") for value in values}
+  new = dict(row)
+  for field in ["input", "output"]:
+    text = row[field]
+    for value in values:
+      text = text.replace(value, mapping[value])
+    new[field] = text
+  return new
+
+
 def publish(run: Run, staging: Path, name: str, payload: Any, metadata: dict[str, Any]) -> None:
   """Write payload to `{name}.json` under staging and log it as a dataset artifact."""
   path = staging / f"{name}.json"
@@ -279,7 +298,7 @@ def entity_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def main(args: Namespace) -> None:
   load_dotenv()
 
-  levels = {"m1": args.m1, "m2": args.m2}
+  levels = {"m1": args.m1, "m2": args.m2, "m2e": args.m2_entity}
 
   with (
     wandb.init(
@@ -295,6 +314,7 @@ def main(args: Namespace) -> None:
         "glove": args.glove,
         "levels": levels,
         "gamma": args.gamma,
+        "variants_only": args.variants_only,
       },
     ) as run,
     TemporaryDirectory() as tmp,
@@ -305,36 +325,54 @@ def main(args: Namespace) -> None:
     log.info(f"parsing {vectors.name} ({glove.metadata['vocab_size']} words)")
     tem = Tem(vectors, args.gamma)
 
-    splits = {**build_nemotron(args), **build_alpaca(args)}
+    if args.variants_only:
+      splits = {}
+      for name in args.datasets:
+        path = Path(run.use_artifact(f"{name}:latest", type="dataset").download())
+        splits[name] = json.loads(next(path.glob("*.json")).read_text())
+        log.info(f"{name}: {len(splits[name])} rows loaded from the published dataset")
+    else:
+      splits = {**build_nemotron(args), **build_alpaca(args)}
 
-    train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
-    probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
-    assert not train_uids & probe_uids, "probe records leaked into the training corpus"
+      train_uids = {example["source_uid"] for example in splits["nemotron_train"]}
+      probe_uids = {example["source_uid"] for example in splits["nemotron_probe"]}
+      assert not train_uids & probe_uids, "probe records leaked into the training corpus"
 
-    corpora = [name for name in splits if name.endswith("_train")]
-    for name, rows in splits.items():
-      publish(run, staging, name, rows, entity_stats(rows))
-    publish(run, staging, "labels", EXTRACTABLE_LABELS, {"n_labels": len(EXTRACTABLE_LABELS)})
+      for name, rows in splits.items():
+        publish(run, staging, name, rows, entity_stats(rows))
+      publish(run, staging, "labels", EXTRACTABLE_LABELS, {"n_labels": len(EXTRACTABLE_LABELS)})
 
+    train_splits = [name for name in splits if name.endswith("_train")]
     vocab = {
       split: sorted({token for row in splits[split] for field in ["input", "output"] for token in row[field].split()})
-      for split in corpora
+      for split in train_splits
     }
     jobs = [(mechanism, level) for mechanism, values in levels.items() for level in values]
 
-    for split, (mechanism, level) in product(corpora, jobs):
+    for split, (mechanism, level) in product(train_splits, jobs):
+      if mechanism == "m2e" and not any(row["spans"] for row in splits[split]):
+        log.info(f"{split}: no gold spans, skipping {mechanism}")
+        continue
+
       perturbed = []
       for row in splits[split]:
+        key = f"{args.seed}:{split}:{mechanism}:{level}:{row['example_id']}"
+        if mechanism == "m2e":
+          perturbed.append(M2E(row, tem, level, key))
+          continue
         new = dict(row)
         for field in ["input", "output"]:
-          key = f"{args.seed}:{split}:{mechanism}:{level}:{row['example_id']}:{field}"
           text = row[field]
-          new[field] = M1(text, level, key, vocab[split]) if mechanism == "m1" else tem.sanitize(text, level, key)
+          new[field] = (
+            M1(text, level, f"{key}:{field}", vocab[split])
+            if mechanism == "m1"
+            else tem.sanitize(text, level, f"{key}:{field}")
+          )
         perturbed.append(new)
 
-      suffix = f"p{int(level * 100):02d}" if mechanism == "m1" else f"eps{int(level)}"
       metadata = {"mechanism": mechanism, "level": level, "parent": split, "n_rows": len(perturbed)}
-      publish(run, staging, f"{split}_{mechanism}_{suffix}", perturbed, metadata)
+      name = f"{split}_{mechanism}_{suffix(mechanism, level)}"
+      publish(run, staging, name, perturbed, metadata)
 
 
 if __name__ == "__main__":
@@ -350,10 +388,19 @@ if __name__ == "__main__":
   )
   parser.add_argument("--glove", default="glove:latest", help="GloVe embeddings artifact NAME:VERSION")
   parser.add_argument(
-    "--m1", type=lambda v: [float(x) for x in v.split(",")], default=[0.05, 0.15, 0.30, 0.50], help="M1 rates p"
+    "--variants-only",
+    action="store_true",
+    help="perturb the already published datasets instead of rebuilding and republishing them",
   )
   parser.add_argument(
-    "--m2", type=lambda v: [float(x) for x in v.split(",")], default=[1.0, 3.0, 6.0, 12.0], help="M2 budgets epsilon"
+    "--datasets",
+    nargs="+",
+    default=["nemotron_train", "alpaca_train"],
+    help="published datasets to perturb under --variants-only",
   )
+  levels = lambda v: [float(x) for x in v.strip("\"'").split(",") if x.strip()]
+  parser.add_argument("--m1", type=levels, default=[0.05, 0.15, 0.30, 0.50], help="M1 rates p")
+  parser.add_argument("--m2", type=levels, default=[1.0, 3.0, 6.0, 12.0], help="M2 budgets epsilon")
+  parser.add_argument("--m2-entity", type=levels, default=[], help="entity-targeted TEM budgets epsilon")
   parser.add_argument("--gamma", type=float, default=5.0, help="TEM truncation radius in GloVe space")
   main(parser.parse_args())

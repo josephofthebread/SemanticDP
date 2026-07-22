@@ -1,0 +1,21 @@
+name: SemanticDP-variants
+desc: Perturb the published datasets into new sanitization variants
+cmd: >
+  python3 gendata.py
+  --variants-only
+  --datasets nemotron_train alpaca_train
+  --m1 ""
+  --m2 0.5,2,4,5
+  --m2-entity 1,3
+env:
+  vars:
+    - WANDB_ENTITY: josephofthebread
+    - WANDB_PROJECT: SemanticDP
+  python:
+    type: manual
+    version: "3.12"
+    requirements-file: requirements-data.txt
+    local-paths:
+      - gendata.py
+cloud-instance-types:
+  - c1.32

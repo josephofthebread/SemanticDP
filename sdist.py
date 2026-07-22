@@ -26,12 +26,20 @@ def distances(encoder: SentenceTransformer, left: list[str], right: list[str], b
   return (1 - (a * b).sum(dim=1)).clamp(0, 1).tolist()
 
 
-def corpus_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> dict[str, dict[str, Any]]:
+def text_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> dict[str, dict[str, Any]]:
+  """S between each published perturbed variant and the clean text it was derived from."""
+  api = wandb.Api()
+  published = {c.name for c in api.artifact_type("dataset", project=f"{run.entity}/{run.project}").collections()}
+
   results = {}
-  for corpus in args.corpora:
-    base = {row["example_id"]: row for row in dataset(run, f"{corpus}_train")}
-    for arm in args.arms:
-      rows = dataset(run, f"{corpus}_train_{arm}")
+  for name in args.datasets:
+    base = {row["example_id"]: row for row in dataset(run, f"{name}_train")}
+    prefix = f"{name}_train_"
+    variants = sorted(other.removeprefix(prefix) for other in published if other.startswith(prefix))
+    log.info(f"{name}: {len(variants)} perturbed variants published")
+
+    for variant in variants:
+      rows = dataset(run, f"{name}_train_{variant}")
       originals = [base[row["example_id"]] for row in rows]
       plain = [f"{row['input']} {row['output']}" for row in originals]
       perturbed = [f"{row['input']} {row['output']}" for row in rows]
@@ -47,7 +55,7 @@ def corpus_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> di
           for span in original["spans"]:
             total += 1
             kept += span["text"].lower() in lowered
-        scores["s_ent"] = 1 - kept / total
+        scores["s_entity"] = 1 - kept / total
 
         masked = []
         for texts in (plain, perturbed):
@@ -57,14 +65,15 @@ def corpus_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> di
               text = text.replace(value, " ")
             stripped.append(" ".join(text.split()))
           masked.append(stripped)
-        scores["s_gen"] = sum(distances(encoder, masked[0], masked[1], args.batch_size)) / len(rows)
+        scores["s_carrier"] = sum(distances(encoder, masked[0], masked[1], args.batch_size)) / len(rows)
 
-      results[f"{corpus}/{arm}"] = scores
-      log.info(f"{corpus}/{arm}: {scores}")
+      results[f"{name}/{variant}"] = scores
+      log.info(f"{name}/{variant}: {scores}")
   return results
 
 
 def generation_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -> dict[str, dict[str, Any]]:
+  """S between each adapter's generations and those of its non-private counterpart."""
   api = wandb.Api()
   names = [c.name for c in api.artifact_type("generations", project=f"{run.entity}/{run.project}").collections()]
   log.info(f"{len(names)} generation artifacts")
@@ -76,18 +85,18 @@ def generation_scores(run: Run, encoder: SentenceTransformer, args: Namespace) -
   results = {}
   for name in sorted(names):
     stem = name.removeprefix("generations-")
-    match = re.search(r"-s(\d+)(?:-eps\d+)?$", stem)
+    match = re.search(r"-s(\d+)(?:-eps[\d.]+)?(?:-[a-z][a-z0-9]*)?$", stem)
     if not match:
       continue
     head = stem[: match.start()]
-    corpus = next((c for c in args.corpora if f"-{c}_train" in head), None)
-    if corpus is None:
+    which = next((candidate for candidate in args.datasets if f"-{candidate}_train" in head), None)
+    if which is None:
       continue
-    reference = f"generations-{head[: head.index(f'-{corpus}_train')]}-{corpus}_train-s{match.group(1)}"
+    reference = f"generations-{head[: head.index(f'-{which}_train')]}-{which}_train-s{match.group(1)}"
     if reference == name:
       continue
     if reference not in names:
-      log.warning(f"{name}: missing M0 reference {reference}")
+      log.warning(f"{name}: missing non-private reference {reference}")
       continue
 
     rows, baseline = load(name), load(reference)
@@ -107,30 +116,29 @@ def main(args: Namespace) -> None:
 
   with wandb.init(job_type="sdist", config={**vars(args)}) as run:
     results = {
-      "corpus": corpus_scores(run, encoder, args),
+      "datasets": text_scores(run, encoder, args),
       "generations": generation_scores(run, encoder, args),
     }
+
+    for phase, scores in results.items():
+      for key, values in scores.items():
+        for field, value in values.items():
+          if isinstance(value, (int, float)):
+            run.summary[f"{phase}/{key}/{field}"] = value
 
     staging = Path(run.dir) / "distortion.json"
     staging.write_text(json.dumps(results, indent=2, sort_keys=True))
     artifact = wandb.Artifact(
-      "distortion",
-      type="distortion",
-      metadata={"encoder": args.encoder, "corpora": args.corpora, "arms": args.arms},
+      "distortion", type="distortion", metadata={"encoder": args.encoder, "datasets": args.datasets}
     )
     artifact.add_file(str(staging))
     run.log_artifact(artifact)
 
-    for phase, scores in results.items():
-      for key, values in scores.items():
-        run.summary[f"{phase}/{key}/s"] = values["s"]
-
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
-  parser = ArgumentParser(description="Compute the semantic distortion score S on corpora and on generations.")
-  parser.add_argument("--corpora", nargs="+", required=True, help="corpus names, e.g. nemotron alpaca")
-  parser.add_argument("--arms", nargs="+", required=True, help="perturbed arm suffixes, e.g. m1_p05 m2_eps1")
+  parser = ArgumentParser(description="Compute the semantic distortion score S on training text and on generations.")
+  parser.add_argument("--datasets", nargs="+", required=True, help="dataset names, e.g. nemotron alpaca")
   parser.add_argument("--encoder", default="BAAI/bge-base-en-v1.5")
   parser.add_argument("--batch-size", type=int, default=256)
   main(parser.parse_args())

@@ -1,18 +1,25 @@
-name: SemanticDP-sdist
-desc: Compute the semantic distortion
-cmd: python3 sdist.py --datasets nemotron alpaca
+name: SemanticDP-pipeline
+desc: Train an adapter and evaluate it
+cmd: python3 pack.py
 env:
   docker:
     image: docker.io/pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime
   vars:
     - PIP_BREAK_SYSTEM_PACKAGES: "1"
+    - SERIAL: "1"
     - WANDB_ENTITY: josephofthebread
     - WANDB_PROJECT: SemanticDP
+    - CELLS
   python:
     type: manual
     version: "3.12"
-    requirements-file: requirements-sdist.txt
+    requirements-file: requirements-pipeline.txt
     local-paths:
-      - sdist.py
+      - _jobs/pack.py
+      - train.py
+      - alignment.py
+      - safety.py
+      - evaluate.py
+      - ifeval
 cloud-instance-types:
   - g2.1

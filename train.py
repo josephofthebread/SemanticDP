@@ -64,8 +64,8 @@ def train(args: Namespace, model: Any, tokenizer: Any, rows: list[dict[str, Any]
   if len(examples) < len(rows):
     log.info(f"dropped {len(rows) - len(examples)} rows whose prompt fills max_len {args.max_len}")
 
-  # Held out on a fixed seed, not --seed, so every arm and every seed holds out the same rows: the
-  # curves stay comparable, and no arm trains on another's validation data. These rows are outside
+  # Held out on a fixed seed, not --seed, so every condition and every seed holds out the same rows: the
+  # curves stay comparable, and no condition trains on another's validation data. These rows are outside
   # the training set, so they cost no privacy budget — but that only holds while they are watched
   # rather than selected on.
   index = set(random.Random(0).sample(range(len(examples)), round(args.val * len(examples))))
@@ -223,7 +223,13 @@ def main(args: Namespace) -> None:
     if tokenizer.pad_token_id is None:
       tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=getattr(torch, args.dtype)).to("cuda")  # type: ignore[arg-type]
-    lora = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0, bias="none")
+    lora = LoraConfig(
+      r=args.lora_rank,
+      lora_alpha=2 * args.lora_rank,
+      target_modules=["q_proj", "v_proj"],
+      lora_dropout=0.0,
+      bias="none",
+    )
     model = get_peft_model(model, lora)
     for module in model.modules():
       if isinstance(module, torch.nn.Dropout):
@@ -238,9 +244,12 @@ def main(args: Namespace) -> None:
     grid = {
       "mechanism": "m3" if private else corpus.metadata.get("mechanism", "m0"),
       "level": args.eps if private else corpus.metadata.get("level", 0.0),
+      "tag": args.tag or None,
+      "rank": args.lora_rank,
     }
     suffix = f"-eps{args.eps:g}" if private else ""
-    name = f"adapter-{args.model.split('/')[-1]}-{args.split.split(':')[0]}-s{args.seed}{suffix}"
+    tag = f"-{args.tag}" if args.tag else ""
+    name = f"adapter-{args.model.split('/')[-1]}-{args.split.split(':')[0]}-s{args.seed}{suffix}{tag}"
     adapter = wandb.Artifact(name=name, type="model", metadata=grid)
     adapter.add_dir(tmp)
     run.log_artifact(adapter)
@@ -264,5 +273,7 @@ if __name__ == "__main__":
   parser.add_argument("--max-grad-norm", type=float, default=1.0, help="DP-SGD per-example L2 clipping bound C")
   parser.add_argument("--eps", type=float, default=None, help="enable DP-SGD calibrated to this epsilon")
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
+  parser.add_argument("--lora-rank", type=int, default=16, help="LoRA rank r; alpha tracks at 2r")
+  parser.add_argument("--tag", default="", help="label appended to the adapter name to keep variants distinct")
   parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
   main(parser.parse_args())

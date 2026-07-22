@@ -26,18 +26,18 @@ make requirements
 
 ## Running experiments
 Every stage runs as a DataSphere job, configured in [_jobs](./_jobs/) folder (each submitted **from the repository root**).
-1. Generate the embeddings and the corpora:
+1. Generate the embeddings and the datasets:
   ```bash
   datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/genglove.yaml
   datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/gendata.yaml
   ```
-1. Train and evaluate the grid, one corpus at a time:
+2. Train and evaluate the grid, one dataset at a time:
   ```bash
   _jobs/deploy.sh train nemotron
   _jobs/deploy.sh alignment nemotron
   _jobs/deploy.sh safety nemotron
   ```
-1. score the semantic distortion over every corpus arm and every set of generations:
+3. Score the semantic distortion over every dataset variant and every set of generations:
   ```bash
   datasphere project job execute -p $DATASPHERE_PROJECT -c _jobs/sdist.yaml
   ```
