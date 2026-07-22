@@ -1,0 +1,88 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [proposal, pres, paper]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Compile ${{ matrix.directory }}
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: ${{ matrix.directory }}
+          root_file: main.tex
+          latexmk_use_xelatex: false
+
+      - name: Rename the output to ${{ matrix.directory }}.pdf
+        run: mv ${{ matrix.directory }}/main.pdf ${{ matrix.directory }}/${{ matrix.directory }}.pdf
+
+      - name: Upload ${{ matrix.directory }}.pdf
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/${{ matrix.directory }}.pdf
+          if-no-files-found: error
+          retention-days: 30
+
+  site:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Assemble the static site
+        run: |
+          mkdir -p site
+          cp -r _docs/. site/
+
+      - name: Download the compiled PDFs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pdf-*
+          path: pdfs
+
+      - name: Place the PDFs at the site root
+        run: |
+          cp pdfs/pdf-paper/paper.pdf site/paper.pdf
+          cp pdfs/pdf-pres/pres.pdf site/pres.pdf
+          cp pdfs/pdf-proposal/proposal.pdf site/proposal.pdf
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
