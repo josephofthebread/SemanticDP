@@ -43,23 +43,10 @@ def annotate(runs: pd.DataFrame, job: str, text_s: pd.DataFrame, generation_s: p
   frame["model"] = frame["cfg.model"].str.split("/").str[-1]
   frame["mechanism"] = frame["cfg.mechanism"]
   frame["level"] = pd.to_numeric(frame["cfg.level"], errors="coerce")
-  frame["d"] = [
-    {
-      ("m1", 0.5): 1,
-      ("m1", 0.3): 2,
-      ("m1", 0.15): 3,
-      ("m1", 0.05): 4,
-      ("m2", 1.0): 1,
-      ("m2", 3.0): 2,
-      ("m2", 6.0): 3,
-      ("m2", 12.0): 4,
-      ("m3", 1.0): 1,
-      ("m3", 4.0): 2,
-      ("m3", 8.0): 3,
-      ("m3", 16.0): 4,
-    }.get(key, np.nan)
-    for key in zip(frame.mechanism, frame.level)
-  ]
+  strictness = frame.level * np.where(frame.mechanism == "m1", -1.0, 1.0)
+  rank = strictness.groupby(frame.mechanism).rank(method="dense")
+  frame["d"] = rank.groupby(frame.mechanism).transform(lambda column: (column - column.mean()) / column.std())
+  frame.loc[frame.mechanism.isin(["m0", "base"]), "d"] = np.nan
   frame["stem"] = frame["cfg.lora"].str.split(":").str[0].str.removeprefix("adapter-")
   frame = frame.merge(text_s, on=["dataset", "variant"], how="left").merge(generation_s, on="stem", how="left")
   frame.loc[frame.mechanism.isin(["m0", "m3", "base"]), ["S_text", "S_entity", "S_carrier"]] = 0.0
@@ -137,10 +124,11 @@ def main() -> None:
   safety = against_m0(annotate(runs, "safety", text_s, generation_s), SAFETY)
   log.info(f"safety: {len(safety)} runs, {sum(column in safety for column in SAFETY)}/{len(SAFETY)} metrics present")
 
-  mechanisms = evaluate.mechanism.isin(["m1", "m2", "m3"])
+  registered = evaluate.mechanism.isin(["m1", "m2", "m3"])
+  scored = evaluate.mechanism.isin(["m1", "m2", "m2e", "m3"])
   for component in COMPONENTS:
-    column = evaluate.loc[mechanisms, f"drop.{component}"]
-    evaluate.loc[mechanisms, f"z.{component}"] = (column - column.mean()) / column.std()
+    column = evaluate.loc[registered, f"drop.{component}"]
+    evaluate.loc[scored, f"z.{component}"] = (evaluate.loc[scored, f"drop.{component}"] - column.mean()) / column.std()
   evaluate["Y"] = evaluate[[f"z.{component}" for component in COMPONENTS]].mean(axis=1)
   evaluate["Y_no_truthfulqa"] = evaluate[
     [f"z.{component}" for component in COMPONENTS if not component.startswith("truthfulqa")]
