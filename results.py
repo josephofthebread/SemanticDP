@@ -125,7 +125,7 @@ def main() -> None:
   log.info(f"safety: {len(safety)} runs, {sum(column in safety for column in SAFETY)}/{len(SAFETY)} metrics present")
 
   registered = evaluate.mechanism.isin(["m1", "m2", "m3"])
-  scored = evaluate.mechanism.isin(["m1", "m2", "m2e", "m3"])
+  scored = evaluate.mechanism.isin(["m1", "m2", "m2e", "m3", "m2m3"])
   for component in COMPONENTS:
     column = evaluate.loc[registered, f"drop.{component}"]
     evaluate.loc[scored, f"z.{component}"] = (evaluate.loc[scored, f"drop.{component}"] - column.mean()) / column.std()

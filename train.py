@@ -214,7 +214,7 @@ def main(args: Namespace) -> None:
     TemporaryDirectory() as tmp,
   ):
     corpus = run.use_artifact(args.split, type="dataset")
-    if args.eps is not None and corpus.metadata.get("mechanism"):
+    if args.eps is not None and corpus.metadata.get("mechanism") and not args.compose:
       raise SystemExit(f"--eps needs a clean corpus; {args.split} is {corpus.metadata['mechanism']}")
     rows = json.loads(next(Path(corpus.download()).glob("*.json")).read_text())
     log.info(f"{args.split}: {len(rows)} rows")
@@ -241,9 +241,11 @@ def main(args: Namespace) -> None:
 
     model.save_pretrained(tmp)
     private = args.eps is not None
+    source = corpus.metadata.get("mechanism", "m0")
+    composed = private and args.compose and source not in ("m0", "")
     grid = {
-      "mechanism": "m3" if private else corpus.metadata.get("mechanism", "m0"),
-      "level": args.eps if private else corpus.metadata.get("level", 0.0),
+      "mechanism": f"{source}m3" if composed else ("m3" if private else source),
+      "level": corpus.metadata.get("level", 0.0) if composed else (args.eps if private else corpus.metadata.get("level", 0.0)),
       "tag": args.tag or None,
       "rank": args.lora_rank,
     }
@@ -275,5 +277,6 @@ if __name__ == "__main__":
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
   parser.add_argument("--lora-rank", type=int, default=16, help="LoRA rank r; alpha tracks at 2r")
   parser.add_argument("--tag", default="", help="label appended to the adapter name to keep variants distinct")
+  parser.add_argument("--compose", action="store_true", help="allow --eps on a perturbed split, composing sanitization with DP-SGD")
   parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
   main(parser.parse_args())
