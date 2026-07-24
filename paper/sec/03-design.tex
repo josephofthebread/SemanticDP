@@ -1,0 +1,85 @@
+\section{\label{sec:design}Design}
+Let $\theta_0$ be a small instruction-tuned open-weight LLM.
+Each run applies a privacy mechanism $m_i$ at a given strength,
+acting on either the adaptation data or the adaptation procedure,
+and produces an adapted model.
+Each run yields two measurements.
+\textbf{Semantic distortion} $S_i$ is the mean cosine distance between sentence embeddings of the original and the rewritten training text;
+where the mechanism leaves the text intact,
+it is measured between generations of the adapted and the base model on a fixed probe set.
+$S$ is computed without reference to the privacy parameter that produced it.
+\textbf{Alignment degradation} $Y_i$ is the drop from the same model's non-private baseline on the evaluation suite of \S\ref{sec:eval}.
+
+We question whether degradation travels through semantic damage to the training signal or through non-semantic side effects of the noise.
+The two make opposite predictions about what survives conditioning on distortion:
+if degradation runs through meaning,
+the association between privacy level and $Y$ vanishes once $S$ is held fixed;
+if it does not,
+a level effect remains at fixed $S$.
+Splitting the association that way and writing it linearly yields
+\begin{equation}
+  Y_i = a_{m_i} + b_{m_i} d_i + c S_i + e_i,
+  \label{eq:model}
+\end{equation}
+where $d_i$ is the privacy-level rank of run $i$ within its own mechanism,
+$a_m$ and $b_m$ are a per-mechanism intercept and level slope,
+respectively,
+and $e_i$ is the error term.
+A random intercept per base model is added to $a_m$.
+$Y$,
+$d$ and $S$ are z-scored,
+so $b_m$ and $c$ are standardized effects on a common scale.
+Baseline runs have $Y \equiv 0$ by definition:
+they set the zero point and are not regression rows.
+
+Despite the mechanism index on $a_m$ and $b_m$,
+\eqref{eq:model} is one regression estimated jointly over all mechanism runs through indicator variables:
+seven coefficients fitted in a single pass,
+with the per-model random intercept as a mixed-effects term and cluster-robust standard errors by model~$\times$~mechanism cell.
+Each row activates the intercept and slope of its own mechanism only.
+The $S$ column carries no indicator,
+so $c$ is shared and pools mechanisms that disagree about how much distortion a given privacy level buys.
+Joint estimation puts $\hat c$ and each $\hat b_m$ in one covariance matrix,
+so comparing them is a Wald test on linear combinations of coefficients.
+
+The privacy level enters \eqref{eq:model} only through its rank $d_i$.
+Within each mechanism the settings are ordered from strictest to loosest,
+coded $1$ upward,
+and z-scored,
+so mechanisms with different numbers of levels enter on the same scale.
+The nominal budgets are incomparable across families:
+private optimization gives example-level $(\varepsilon, \delta)$-DP~\citep{abadi2016deep},
+sanitization word-level metric LDP~\citep{chatzikokolakis2013broadening}.
+Rank coding rests on the ordering of the settings alone,
+which leaves $S$ as the one regressor common to every mechanism.
+
+We state the claim in two stages,
+because a shared coefficient can be statistically distinct from zero and still too small to matter.
+The first stage fixes a negligibility floor $\Delta = 0.10$ in standardized units,
+committed before the main pass together with the primary $S$ metric and the exclusion rules,
+and asks whether $|c| \ge \Delta$:
+distortion moves alignment by an amount worth acting on.
+The value of $\Delta$ is arbitrary and the conclusion does not turn on it;
+it marks the point below which an effect is negligible,
+so a confidence interval for $c$ contained in $(-\Delta, \Delta)$ settles the first stage the other way,
+establishing the practical absence of the semantic pathway by a two one-sided equivalence test.
+The second stage is the substantive one:
+$|c| \gg |b_m|$ for every mechanism,
+distortion predicting degradation far more strongly than the nominal privacy level,
+tested as $|c| > |b_m|$ on the joint covariance of \eqref{eq:model}.
+
+Within a single mechanism $S$ and $\varepsilon$ are correlated by construction,
+so no one mechanism separates $b_m$ from $c$.
+The design produces variation in $S$ at fixed privacy from two sources.
+The first is the contrast between families,
+which reach comparable privacy with different amounts of semantic damage:
+sanitization passes out-of-vocabulary tokens through untouched while random replacement destroys them,
+and PII is typically out of vocabulary (\S\ref{sec:mech}).
+The second is a non-private control.
+If it degrades alignment as much as the private conditions at equal $S$,
+semantic damage rather than privacy is the cause;
+if it does not,
+the residual measures mechanism-specific, non-semantic effects.
+We report variance inflation factors (VIF) for $S$,
+falling back to the within-level cross-mechanism contrast,
+which is free of $\varepsilon$ -- $S$ confounding.

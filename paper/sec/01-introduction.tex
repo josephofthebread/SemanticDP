@@ -1,1 +1,58 @@
 \section{Introduction}
+Organizations,
+wishing to train their large language models (LLMs) on the sensitive data records are expected to do so under a formal privacy guarantee.
+The standard answers are private optimization techniques, which add calibrated noise to the gradient updates \citep{abadi2016deep, mironov2017renyi},
+and text sanitization,
+which alters the training data itself before the model even sees it \citep{feyisetan2020privacy, yue2021differential, carvalho2021tem}.
+Both are mature enough to deploy,
+and both are routinely evaluated the same way:
+fit the model at several privacy budgets,
+report benchmark accuracy,
+and read off the cost of privacy as the gap to a non-private baseline.
+
+What privacy costs is not only how often the model is right,
+but how it behaves.
+An adapted model can keep its benchmark accuracy and still behave worse,
+e.g. follow instructions less reliably,
+stops refusing requests it should decline and etc.
+We call this alignment degradation.
+That privacy induces it is established:
+\citet{ramesh2026privacyhallucination} fine-tune under private optimization and find factual consistency dropping as the budget tightens,
+with the damage falling on facts learned during fine-tuning rather than on what the model already knew.
+The cause is open,
+and it decides the fix.
+If noise destabilizes optimization,
+the fix is a better optimizer.
+If the damage runs through the meaning of the training text,
+then any mechanism that distorts meaning will cause it,
+private or not,
+and the fix must protect meaning instead.
+
+We therefore measure how much each mechanism changes the meaning of the training text:
+the embedding distance between the original text and what the mechanism produced.
+That gives one scale on which private optimization and sanitization can be compared,
+even though their privacy budgets cannot be.
+We then add a mechanism with no privacy guarantee at all,
+random token replacement,
+which damages meaning without buying any privacy.
+If degradation follows distortion there too,
+then it is the damage to meaning that matters,
+not the privacy.
+We run every mechanism on two datasets that differ in how many facts their text carries:
+entity-rich and entity-poor.
+
+\paragraph{What we find.}
+Distortion predicts degradation;
+the privacy budget barely does.
+Tightening the private optimiser by more than an order of magnitude leaves measured degradation where it was,
+and sanitization does its damage as a cliff rather than a gradient,
+with most of its budget range carrying no information about how the model will behave.
+The sharpest result is a reversal:
+damaging the language around the facts costs far more than damaging the facts themselves,
+so a mechanism aimed only at the sensitive spans keeps refusal and factual grounding intact where uniform sanitization destroys both.
+The privacy mechanism was aimed at the sensitive content;
+what it actually damaged was the model's ability to behave.
+The study uses three small instruction-tuned open-weight models of one to two billion parameters,
+two instruction datasets,
+low-rank adapters and three seeds per condition.
+We enumerate this paper contributions in \app{contrib}.
