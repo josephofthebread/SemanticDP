@@ -151,6 +151,12 @@ def main() -> None:
     table.to_csv(path, index=False)
     log.info(f"{path}: {len(table)} rows x {len(table.columns)} columns")
 
+  with wandb.init(job_type="results") as run:
+    artifact = wandb.Artifact("results", type="results")
+    artifact.add_dir("results")
+    run.log_artifact(artifact)
+    log.info("wandb: logged artifact results")
+
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
