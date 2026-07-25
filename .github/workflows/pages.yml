@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -69,6 +70,15 @@ jobs:
           cp pdfs/pdf-paper/paper.pdf site/paper.pdf
           cp pdfs/pdf-pres/pres.pdf site/pres.pdf
           cp pdfs/pdf-proposal/proposal.pdf site/proposal.pdf
+
+      - name: Pack the latest aggregated results into the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=$(gh run list --workflow results.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$run" || { echo "no successful Results run to attach; dispatch results.yml"; exit 1; }
+          gh run download "$run" --name results --dir csv
+          zip -qj site/results.zip csv/*.csv
 
       - name: Upload the Pages artifact
         uses: actions/upload-pages-artifact@v3
