@@ -4,10 +4,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Does Privacy Distort Alignment?</title>
-  <meta name="description" content="A controlled study of how differentially private training and text sanitization affect the alignment, safety, and truthfulness of small language models.">
+  <title>Alignment Lives in the Carrier</title>
+  <meta name="description" content="A controlled study separating the semantic and non-semantic costs of private LLM adaptation: alignment degradation tracks the semantic damage a mechanism does to the training text.">
   <meta name="author" content="Dmitry Scherbakov">
-  <meta name="keywords" content="differential privacy, language model alignment, AI safety, hallucination, semantic distortion, DP-SGD, large language models">
+  <meta name="keywords" content="AI safety, alignment, differential privacy, large language models, semantic distortion, utility">
   <link rel="canonical" href="https://josephofthebread.github.io/SemanticDP/">
   <link rel="icon" href="logo.png">
   <meta name="theme-color" content="#fdfcfb" media="(prefers-color-scheme: light)">
@@ -17,8 +17,8 @@
   <meta property="og:site_name" content="SemanticDP">
   <meta property="og:locale" content="en_US">
   <meta property="og:url" content="https://josephofthebread.github.io/SemanticDP/">
-  <meta property="og:title" content="Does Privacy Distort Alignment?">
-  <meta property="og:description" content="Decomposing the effects of differential privacy on LLM hallucination and misalignment.">
+  <meta property="og:title" content="Alignment Lives in the Carrier">
+  <meta property="og:description" content="Locating the semantic cost of private LLM adaptation.">
   <meta property="og:image" content="https://josephofthebread.github.io/SemanticDP/logo.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="967">
@@ -27,14 +27,14 @@
   <meta property="article:author" content="Dmitry Scherbakov">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Does Privacy Distort Alignment?">
-  <meta name="twitter:description" content="Decomposing the effects of differential privacy on LLM hallucination and misalignment.">
+  <meta name="twitter:title" content="Alignment Lives in the Carrier">
+  <meta name="twitter:description" content="Locating the semantic cost of private LLM adaptation.">
   <meta name="twitter:image" content="https://josephofthebread.github.io/SemanticDP/logo.png">
   <meta name="twitter:image:alt" content="SMILES logo">
 
-  <meta name="citation_title" content="Does Privacy Distort Alignment? Decomposing the Effects of Differential Privacy on LLM Hallucination and Misalignment">
+  <meta name="citation_title" content="Alignment Lives in the Carrier: Locating the Semantic Cost of Private LLM Adaptation">
   <meta name="citation_author" content="Scherbakov, Dmitry">
-  <meta name="citation_author_institution" content="Applied Mathematics and Cybernetics, Moscow State University, Russia">
+  <meta name="citation_author_institution" content="Faculty of Computational Mathematics and Cybernetics, Moscow State University, Russia">
   <meta name="citation_author" content="Liu, Fang">
   <meta name="citation_author_institution" content="Applied and Computational Mathematics and Statistics, University of Notre Dame, USA">
   <meta name="citation_publication_date" content="2026">
@@ -254,14 +254,14 @@
       <p>Smiles School Projects Proceedings 2026 (SSPP 2026)</p>
     </header>
 
-    <h1>Does Privacy Distort Alignment?</h1>
-    <p class="subtitle">Decomposing the Effects of Differential Privacy on LLM Hallucination and Misalignment</p>
+    <h1>Alignment Lives in the Carrier</h1>
+    <p class="subtitle">Locating the Semantic Cost of Private LLM Adaptation</p>
 
     <p class="authors">
       Dmitry Scherbakov<sup>1</sup> &nbsp; Fang Liu<sup>2</sup>
     </p>
     <p class="affiliations">
-      <span><sup>1</sup>Applied Mathematics and Cybernetics, Moscow State University, Russia</span>
+      <span><sup>1</sup>Faculty of Computational Mathematics and Cybernetics, Moscow State University, Russia</span>
       <span><sup>2</sup>Applied and Computational Mathematics and Statistics, University of Notre Dame, USA</span>
     </p>
 
@@ -277,26 +277,26 @@
     </nav>
 
     <section>
-      <p>We study how differentially private (DP) mechanisms affect the utility and safety alignment of language models
-        (LMs). We decompose privacy effects into multiple pathways: direct changes to training or generation behavior,
-        measurable semantic distortion of task-relevant content, and downstream alignment degradation. In a controlled
-        setting using small open-weight LMs, public alignment datasets, and lightweight fine-tuning or inference-time
-        perturbation methods, we evaluate whether semantic distortion explains alignment failures beyond what is
-        predicted by privacy budget alone. We compare several privacy mechanisms, including random token perturbation,
-        semantic text sanitization, and DP-compatible fine-tuning, across tasks measuring truthfulness, hallucination,
-        safety behavior, refusal accuracy, helpfulness, and instruction following. Our central question is when, and to
-        what extent, semantic distortion accounts for DP-induced degradation relative to alternative mechanisms such as
-        optimization instability, calibration shifts, or regularization effects. The study produces
-        privacy-alignment-utility curves and a compact evaluation framework for analyzing how privacy mechanisms affect
-        both semantic fidelity and behavioral alignment. These results aim to clarify which forms of privacy noise are
-        most damaging to aligned LM behavior and to inform mitigation strategies for preserving alignment under stronger
-        privacy constraints.</p>
+      <p>Differentially private adaptation of large language models (LLMs) degrades alignment, but the cause has gone
+        unattributed: the damage may travel through the meaning of the training signal, or through non-semantic side
+        effects of the noise. We separate the two. We measure semantic distortion as an embedding distance, a scale
+        comparable across mechanism families that report privacy on incomparable budgets, and we add a mechanism that
+        distorts meaning while carrying no privacy guarantee at all. Over a pre-registered grid of 324 adapters
+        spanning three model families and two instruction datasets, distortion predicts degradation with a
+        standardized coefficient of 0.65, while the private optimizer's level slope holds at −0.02 ± 0.04 across a
+        sixteenfold range of ε. Sanitization spends its damage at a threshold, leaving half of its registered budget
+        levels behaviorally identical. The sharpest result is a reversal. Damaging the ordinary language that surrounds
+        sensitive spans costs far more than damaging the spans themselves, +1.83 against −0.72, so a mechanism that
+        sanitizes only the entity spans preserves the refusal behavior and factual grounding that uniform sanitization
+        destroys. Measured memorization stays at the floor of our extraction probe across every mechanism, so the
+        privacy side of the trade rests on the formal guarantees. What privacy costs alignment is the semantic damage a
+        mechanism does to the text, which makes the choice of what to damage a design variable.</p>
     </section>
 
     <section>
       <h2>Citation</h2>
-      <pre class="bibtex">@inproceedings{scherbakov2026does,
-  title     = {Does Privacy Distort Alignment? Decomposing the Effects of Differential Privacy on {LLM} Hallucination and Misalignment},
+      <pre class="bibtex">@inproceedings{scherbakov2026alignment,
+  title     = {Alignment Lives in the Carrier: Locating the Semantic Cost of Private {LLM} Adaptation},
   author    = {Dmitry Scherbakov and Fang Liu},
   booktitle = {Smiles School Projects Proceedings 2026},
   year      = {2026}
