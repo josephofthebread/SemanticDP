@@ -245,7 +245,7 @@ def main(args: Namespace) -> None:
     composed = private and args.compose and source not in ("m0", "")
     grid = {
       "mechanism": f"{source}m3" if composed else ("m3" if private else source),
-      "level": corpus.metadata.get("level", 0.0) if composed else (args.eps if private else corpus.metadata.get("level", 0.0)),
+      "level": args.eps if private and not composed else corpus.metadata.get("level", 0.0),
       "tag": args.tag or None,
       "rank": args.lora_rank,
     }
@@ -277,6 +277,8 @@ if __name__ == "__main__":
   parser.add_argument("--delta", type=float, default=1e-5, help="DP delta for the epsilon calibration")
   parser.add_argument("--lora-rank", type=int, default=16, help="LoRA rank r; alpha tracks at 2r")
   parser.add_argument("--tag", default="", help="label appended to the adapter name to keep variants distinct")
-  parser.add_argument("--compose", action="store_true", help="allow --eps on a perturbed split, composing sanitization with DP-SGD")
+  parser.add_argument(
+    "--compose", action="store_true", help="allow --eps on a perturbed split, composing sanitization with DP-SGD"
+  )
   parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
   main(parser.parse_args())
