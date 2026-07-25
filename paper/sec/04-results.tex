@@ -1,0 +1,145 @@
+\section{\label{sec:results}Results}
+The grid completed in full:
+$324$ adapters,
+of which the $288$ runs of the three registered mechanisms enter \eqref{eq:model}.
+Coverage,
+sanity checks,
+level-by-level responses,
+per-component fits,
+configuration sensitivity and every deviation from the registered analysis are in \apx{additional}.
+
+\subsection{\label{sec:pathway}Distortion predicts degradation and the budget is inert}
+Semantic distortion carries the effect under both measurements of $S$ (Table~\ref{tab:mainfit}).
+On the training text $\hat c = 0.647$ ($\mathrm{SE}\ 0.076$, $p < 10^{-16}$);
+on generations $\hat c = 0.543$ ($\mathrm{SE}\ 0.055$, $p < 10^{-22}$).
+The pre-registered floor is $|c| \ge 0.10$,
+which the estimate clears sixfold,
+the lower end of the $95\%$ interval sitting at $0.498$ and $0.435$ respectively.
+The registered standard errors cluster on nine cells and roughly double the interval,
+putting the bootstrap $p$ at $0.060$,
+against $0.003$ when the same dependence is taken where $S$ is assigned (\apx{primary}).
+Figure~\ref{fig:pathway} shows the trend running through all three families,
+which occupy different regions of the distortion axis.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{pathway.pdf}
+  \caption{\textbf{Degradation follows distortion, across mechanisms on incomparable privacy scales.} One point per adapter,
+  the line an unadjusted trend over the registered mechanisms.
+  Private optimization is the vertical cluster at $S \approx 0$,
+  leaving the text intact.
+  The entity-targeted control sits $0.60$ below the trend,
+  which is what identifies the split of \S\ref{sec:carrier}.}
+  \label{fig:pathway}
+\end{figure}
+
+The level slopes are $-0.128$,
+$+0.330$ and $-0.023$ for replacement,
+sanitization and private optimization text-side,
+and $-0.207$,
+$+0.325$ and $-0.005$ generation-side.
+The largest of them,
+$0.330$,
+sits well below $|c| = 0.647$,
+so $|c| > |b_m|$ holds for every mechanism under both measurements and the dominance claim is supported.
+For private optimization the level slope is $-0.023$ ($\mathrm{SE}\ 0.041$),
+so tightening $\varepsilon$ sixteenfold from $16$ to $1$ leaves measured degradation where it was.
+Distortion identifies $c$ on its own:
+dropping the level term takes the VIF from $8.07$ to $2.08$ and gives $\hat c = +0.403$ ($\mathrm{SE}\ 0.041$, $p < 10^{-21}$),
+so the coefficient is large and precisely identified under either specification.
+
+\subsection{\label{sec:carrier}The carrier matters more than the entities}
+Splitting distortion reverses the intuition that what privacy costs is the damage done to the sensitive spans themselves.
+Within the uniform mechanisms the entity and carrier components are collinear at $r = 0.991$,
+inflating variance by a VIF of $58.4$,
+which leaves the split unidentified within that family.
+The entity-targeted control breaks the collinearity by occupying a region of the distortion space that the uniform mechanisms leave empty,
+and gives
+\begin{equation}
+  \hat c_{\text{carrier}} = +1.83, \qquad \hat c_{\text{entity}} = -0.72 .
+  \label{eq:split}
+\end{equation}
+The model's alignment lives in the ordinary language around the sensitive content,
+rather than in the content itself.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.66\linewidth]{carrier.pdf}
+  \caption{\textbf{At matched entity displacement,
+  sparing the carrier preserves fidelity,
+  grounding and refusal.} Uniform and entity-targeted sanitization at $\varepsilon = 1$ on the entity-rich dataset,
+  against the non-private baseline.
+  Both displace entities equally ($S_{\text{entity}} = 0.669$ against $0.671$);
+  they differ only in whether the carrier survives.
+  Uniform sanitization takes refusal from $0.196$ to $0.004$,
+  while the targeted variant leaves it at $0.209$.}
+  \label{fig:carrier}
+\end{figure}
+
+The outcome gap is the largest single contrast in the study (Table~\ref{tab:targeted}).
+At matched entity damage the targeted variant tracks the clean baseline:
+fidelity $0.967$ against a baseline $0.975$ and a uniform value $0.705$;
+fabrication $0.0042$,
+identical to the baseline,
+against $0.173$;
+refusal $0.209$ against a baseline $0.196$,
+where uniform sanitization gives $0.004$.
+Uniform sanitization spends most of its behavioral cost on language that carries no private content at all.
+The targeted variant is designed to identify the decomposition,
+and it does so from a between-family contrast at two budgets;
+turning it into a mechanism with a stated guarantee is the natural follow-on.
+
+\subsection{\label{sec:cliff}Sanitization damages alignment at a threshold}
+The sanitization budget does its damage in a single step (Figure~\ref{fig:threshold}, \apx{additional}).
+Text-side $S$ holds constant to within $0.003$ across $\varepsilon \in [0.5, 3]$ on both datasets,
+then collapses between $\varepsilon = 4$ and $6$ and reaches zero by $\varepsilon = 12$.
+Four of the eight registered levels therefore sit on a plateau where the mechanism's output is statistically indistinguishable across budgets.
+The registered equivalence tests confirm both halves of that shape.
+Between the strictest and the loosest plateau setting,
+instruction following and the truthfulness margin are equivalent ($p = 0.0001$ and $0.007$),
+so the prediction holds on two of three metrics,
+entity fidelity sitting outside the margin at $p = 0.064$.
+Between the loosest plateau setting and the first past the transition,
+all three metrics separate cleanly,
+with TOST $p$ above $0.85$ throughout:
+the plateau is real and bounded.
+The useful design question is which side of the transition a deployment lands on,
+rather than where inside the strict region it sits.
+
+\subsection{\label{sec:mediation}The damage runs through fabrication}
+Distortion degrades alignment through a specific channel:
+it makes the model invent.
+Fitting the mediation distortion $\to$ fabrication $\to$ degradation~\citep{imai2010general},
+with the outcome taken as instruction following and truthfulness only so the mediator stays outside it,
+a unit of distortion raises fabrication by $1.14$ standard deviations.
+Conditioning on fabrication drops the direct effect from $+0.518$ to $+0.269$,
+leaving an indirect effect of $+0.250$ (bootstrap $95\%$ CI $[+0.173, +0.339]$),
+about $48\%$ of the total.
+The behavioral end of that chain is the refusal collapse of Figure~\ref{fig:carrier}:
+perturbation degrades the language in which a refusal is expressed,
+and the model stops producing one.
+
+\subsection{\label{sec:scope}Robustness and scope}
+The result reproduces under a second encoder,
+under composition of the two mechanisms,
+and at four times the model size.
+An architecturally unrelated encoder gives $\hat c = +0.608$ and $+0.548$ against $+0.647$ and $+0.543$.
+Composing the mechanisms over $72$ adapters costs $+0.306$ summed over the capability probes,
+against $+0.372$ for exact additivity and $+0.258$ for the more damaging mechanism alone,
+so the two penalties largely stack.
+A two-point scale check at $8$B over $62$ adapters gives $\hat c = +0.376$ ($\mathrm{SE}\ 0.189$, $p = 0.052$),
+so the pathway survives a fourfold increase in model size,
+attenuated on the reduced grid a scale check can afford.
+
+Three boundary conditions delimit the claims.
+Leakage sits below the detection floor of our probe,
+with record-level rates of $0.0115$ for base models,
+$0.0133$ for the non-private baselines and $0.0033$--$0.0047$ across every mechanism,
+so the privacy side of the trade rests on the formal guarantees -- as it does in the deployments these mechanisms are built for.
+On the registered text-side measurement the effect is invariant to entity density,
+so the second dataset replicates the first rather than moderating it;
+the generation-side measurement carries a dataset interaction of $+0.153$ against a main effect of $0.405$ (\apx{additional}).
+And the fidelity probe is exact on the entity-rich dataset,
+where gold spans define it,
+while on the entity-poor dataset it carries a seed spread of $0.13$--$0.23$ and the extraction task itself becomes partly unlearnable under the uniform mechanisms,
+so the entity-rich estimates carry the fidelity conclusions (\apx{additional}).

@@ -1,0 +1,24 @@
+\section{\label{apx:contrib}Summary of contributions}
+What the paper contributes,
+in the order the body develops it:
+
+\begin{itemize}
+  \item A design that makes the semantic and non-semantic pathways separately estimable,
+  by measuring distortion on a common scale across mechanism families and including a distorting mechanism that carries no privacy guarantee.
+  \item A pre-registered target quantity,
+  minimum effect size and exclusion rule,
+  committed before the main pass,
+  with every deviation from it reported.
+  \item A judge-free evaluation suite.
+  No outcome in this paper is scored by a language model,
+  which matters when the quantity under study is alignment and any model-based verifier would inherit the property being measured.
+  \item Evidence that measured distortion is what predicts alignment degradation,
+  dominating the nominal budget,
+  which within the private optimizer is inert over the range studied.
+  \item A decomposition of distortion into entity and carrier components,
+  identified by an entity-targeted control,
+  showing that the carrier dominates -- with the corollary that targeting a privacy mechanism at the content that is sensitive is much cheaper than sanitizing uniformly.
+  \item A methodological result for replications:
+  half of the sanitization budget levels form a behavioral plateau whose transition is locatable from distortion alone before any training,
+  and a denser level encoding trades identifying variation for coverage.
+\end{itemize}

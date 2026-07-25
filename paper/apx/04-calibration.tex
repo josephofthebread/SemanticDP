@@ -1,0 +1,96 @@
+\section{\label{apx:calib}Hyperparameter calibration}
+All tuning was performed on a held-out seed,
+$99$,
+disjoint from the grid seeds $0$--$2$;
+on the clean condition only;
+and applied unchanged to every condition.
+Tuning per condition would have introduced exactly the confound the shared recipe exists to prevent.
+The runs below are calibration measurements.
+
+\paragraph{Peak learning rate.}
+A lot size of $256$ makes $3$ epochs $192$ optimizer steps instead of $3072$,
+so the rate inherited from a $B{=}16$ configuration is far too small:
+at $2\times10^{-4}$ the clean condition reaches validation loss $0.9648$ against $0.8250$ at $B{=}16$,
+and $6\times10^{-4}$ recovers only to $0.8700$.
+Table~\ref{tab:lr} scans the peak rate on all three models.
+We adopt $3.2\times10^{-3}$ for all three rather than one value per model,
+because the data do not separate them.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Peak LR & Qwen3-1.7B & Llama-3.2-1B & Falcon3-1B \\
+\midrule
+$1.0\times10^{-3}$ & 0.8425 & 1.0095 & 0.9402 \\
+$2.0\times10^{-3}$ & 0.8186 & 0.9868 & 0.8931 \\
+$\mathbf{3.2\times10^{-3}}$ & \textbf{0.8122} & \textbf{0.9809} & \textbf{0.8724} \\
+$5.0\times10^{-3}$ & 0.8141 & 0.9876 & -- \\
+$8.0\times10^{-3}$ & 0.8484 & -- & -- \\
+\bottomrule
+\end{tabular}
+\caption{Final validation loss on the clean condition,
+lot size $256$,
+$3$ epochs,
+calibration seed $99$.
+The optimum is bracketed on both sides for Qwen and Llama;
+the Falcon cell at $8\times10^{-3}$ was stopped once it trailed its $3.2\times10^{-3}$ counterpart at epoch~1.}
+\label{tab:lr}
+\end{table}
+
+\paragraph{Where the search stops.}
+Three seeds of the \textit{same} recipe differ at epoch $0$ by $0.0067$ ($0.8865$, $0.8886$, $0.8932$).
+The gap between $3.2\times10^{-3}$ and $5\times10^{-3}$ in Table~\ref{tab:lr} is $0.0019$,
+a quarter of that spread,
+so the two settings are indistinguishable and any further point in this range would measure seed noise.
+The same floor bounds what the design needs to resolve elsewhere:
+the gap in validation loss between the non-private and private conditions at fixed learning rate is about $0.315$,
+roughly $47\times$ the seed spread,
+so the quantity the regression must estimate sits far above the noise level at three seeds per cell.
+
+\paragraph{The tuned rate transfers to the private mechanism.}
+Tuning on the clean condition carried the risk that a $16\times$ increase in learning rate would diverge against gradients clipped to nearly direction-only.
+It does the opposite.
+At $\varepsilon = 8$ the loss improves from $1.2808$ at $2\times10^{-4}$ to $1.1335$ at the tuned rate;
+at $\varepsilon = 1$,
+from $1.3712$ to $1.2532$ after one epoch.
+The perturbed conditions gain as well ($2.8927 \to 2.7212$ after one epoch at $p{=}0.30$),
+with no divergence and no NaN in any cell,
+so no per-mechanism learning rate is required.
+
+\paragraph{Two settings with flat response.}
+Both were live hypotheses that would otherwise be re-proposed.
+\textit{Clipping bound.} At the tuned rate and $\varepsilon = 8$,
+$C = 0.5$ gives $1.1857$,
+$C = 1.0$ gives $1.1859$ and $C = 2.0$ gives $1.2045$;
+the first two agree to four decimals.
+The knob is demonstrably live -- the fraction of clipped examples moves $0.684 / 0.645 / 0.432$ across the three -- it does not matter at this scale,
+so $C = 1.0$ stands.
+That fraction also falls as the rate rises ($0.773$ at $2\times10^{-4}$ against $0.645$ at $3.2\times10^{-3}$, both at $\varepsilon = 8$),
+since larger steps shrink the gradients;
+the two interact,
+which is why $C$ was re-probed at the new rate rather than carried over.
+\textbf{Decay onset.} Starting the cosine at $1.14$ epochs instead of $1.5$ changes Llama's final validation loss from $0.9809$ to $0.9775$ and Qwen's epoch-$0$ loss from $0.8865$ to $0.8856$.
+Both sit below the resolution floor.
+
+\paragraph{Sequence length.}
+Truncation at $2048$ tokens is inexpensive and fixes real data loss:
+at $1024$,
+$50$ rows have prompts that fill the window entirely and $103$ completions are cut short;
+at $2048$ those counts are $2$ and $0$. Doubling again to $4096$ drops nothing further while doubling activation memory,
+which is the binding constraint in the private branch.
+
+\paragraph{Validation loss serves as a diagnostic.}
+An optional fixed-seed holdout logs token-weighted validation loss once per epoch,
+splitting on a fixed generator rather than on the run seed so that every condition and seed holds out the same rows.
+It is disabled for the main grid.
+Each perturbed condition validates against its own perturbed distribution,
+so the levels are incomparable by construction -- $0.96$,
+$3.15$ and $4.81$ for the clean condition,
+random replacement at $p{=}0.30$ and sanitization at $\varepsilon{=}3$ under otherwise identical settings.
+That reflects a different target.
+Within one fixed dataset it remains a valid training diagnostic,
+which is how it is used above.
+With the holdout disabled,
+the grid trains on all $16{,}384$ rows and the privacy guarantee covers the whole dataset.
+

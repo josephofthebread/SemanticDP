@@ -1,0 +1,41 @@
+\section{\label{sec:discussion}Discussion}
+What privacy costs is a cost of semantic damage.
+It is distributed unevenly across the kinds of text a mechanism can damage,
+and therefore at least partly avoidable by choosing what to damage.
+
+\textbf{Stop tuning the budget and start measuring the text.}
+The private optimizer's budget is inert over the range we studied,
+so private training carries a fixed penalty that arrives with the mechanism and can be budgeted for once,
+and half of the registered sanitization levels are behaviorally identical.
+A practitioner who wants to predict what a mechanism will cost should measure what it did to the text,
+rather than read its budget.
+
+\textbf{Aim the mechanism at the spans that are sensitive.}
+Uniform sanitization at a strict budget leaves refusal at $0.004$ against a baseline of $0.196$,
+because the perturbation degraded the language in which a refusal is expressed.
+Sparing the carrier restores refusal to its baseline level at matched entity displacement.
+The targeted variant is a direction with a clear next step:
+it identifies the decomposition on one dataset at two budgets,
+and stating the guarantee a span-targeted mechanism provides is the question that turns it into a deployable method.
+
+\textbf{Where the measurements stop.}
+Leakage sits below our probe's detection floor at this scale,
+so the privacy half of the trade rests on the formal guarantees,
+and a sharper extraction attack would put a measured number on it.
+We adapt by supervised fine-tuning rather than preference optimization~\citep{ouyang2022training, rafailov2023direct},
+we intervene at adaptation time and leave pre-training open,
+where factuality suffers more~\citep{ramesh2026privacyhallucination},
+and our models span $1$--$2$B parameters,
+where the $8$B check finds the pathway attenuated but present.
+The natural next step follows from the asymmetry:
+a non-uniform noise allocation sparing the directions that carry instruction-following behavior,
+and composing \textit{targeted} sanitization with the private optimizer.
+Richer notions of meaning than one encoder's,
+such as semantic entropy~\citep{farquhar2024detecting},
+would enter the same frame as alternative measurements of one latent quantity.
+
+Meaning carries the effect:
+the shared coefficient is $0.65$ text-side and $0.54$ on generations against a pre-registered minimum of $0.10$,
+and it exceeds every level slope.
+What privacy costs alignment is the semantic damage the mechanism did to the text,
+and more precisely \textit{which} text it changed.

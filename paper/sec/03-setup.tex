@@ -1,0 +1,88 @@
+\section{\label{sec:setup}Experimental setup}
+\textbf{Datasets.}
+The perturbed text stands in for the sensitive data,
+and the two datasets differ in \textbf{entity density},
+because privacy risk concentrates in names,
+numbers and facts,
+which the mechanisms treat differently from common words.
+The entity-rich dataset is \texttt{nvidia/Nemotron-PII}~\citep{nvidia2025nemotronpii},
+synthetic clinical and administrative documents whose gold span annotations make the entity component of $S$ exact rather than dependent on a noisy named entity recognition model.
+The entity-poor dataset is a fixed subset of Alpaca~\citep{taori2023alpaca} of the same size,
+generic assistant tasks with few named entities.
+Each is $16{,}384$ instruction rows rendered once and reused by every condition,
+with $375$ records held out for the entity-fidelity probe and $375$ drawn from the training rows for the leakage probe.
+
+\textbf{\label{sec:mech}Mechanisms.}
+The registered grid holds four conditions.
+The \textit{non-private baseline} is low-rank adaptation (LoRA)~\citep{hu2022lora} on clean text,
+defining the zero point of both $Y$ and $S$. \textit{Random token replacement} replaces each whitespace token independently with probability $p \in \{0.05, 0.15, 0.30, 0.50\}$ by a token drawn uniformly from the dataset vocabulary;
+it exists purely to vary distortion independently of any budget.
+\textit{Sanitization} applies the Truncated Exponential Mechanism (TEM)~\citep{carvalho2021tem} over GloVe 6B.300d vectors~\citep{pennington2014glove} at word-level $\varepsilon \in \{0.5, 1, 2, 3, 4, 5, 6, 12\}$,
+restricting substitutions to a distance threshold rather than drawing from the full vocabulary~\citep{yue2021differential}.
+Record numbers,
+phone numbers and email addresses are out of GloVe's vocabulary,
+so the mechanism passes them through and \textit{preserves} literal entities where replacement destroys them at matched nominal privacy:
+that asymmetry is what identifies \eqref{eq:model}.
+\textit{Private optimization} applies DP-SGD~\citep{abadi2016deep} to the LoRA parameters at example-level $\varepsilon \in \{1, 4, 8, 16\}$,
+$\delta = 10^{-5}$,
+with Poisson subsampling as the amplification result requires~\citep{mironov2019sgm} and a R\'enyi accountant~\citep{mironov2017renyi} recomputing the realized budget.
+Both data-side mechanisms rewrite only the content fields,
+leaving the instruction template intact,
+and the registered grid keeps the mechanisms separate;
+a post-hoc block lifts that restriction (\S\ref{sec:scope}).
+A fifth condition,
+\textit{entity-targeted sanitization},
+was added after the main fit:
+it applies the same mechanism to the gold entity spans alone and leaves the carrier verbatim,
+at two budgets on the entity-rich dataset,
+since the targeting requires gold spans (\S\ref{sec:carrier}).
+
+\textbf{Models and adaptation.}
+We use three dense open-weight instruction-tuned models in the $1$--$2$B range:
+Qwen3-1.7B~\citep{yang2025qwen3},
+Llama-3.2-1B-Instruct~\citep{grattafiori2024llama} and Falcon3-1B-Instruct~\citep{falcon3}.
+Three \textit{families} rather than three checkpoints of one let the per-model random intercept absorb base-model idiosyncrasy.
+Every condition uses the same procedure:
+LoRA of rank $16$ on the query and value projections,
+$3{,}211{,}264$ trainable parameters,
+three epochs at a lot size of $256$,
+a warmup--stable--decay schedule~\citep{hu2024minicpm} in fractions of total steps,
+loss on completion tokens only.
+Holding the procedure fixed leaves the mechanism as the only varying factor,
+which \eqref{eq:model} requires,
+and epochs are held at three because the noise scale is calibrated over the total step count,
+so more epochs mean more composition at the same $\varepsilon$.
+
+\textbf{\label{sec:eval}Evaluation.}
+Every component of $Y$ is judge-free,
+so the dependent variable is independent of any judge model's own alignment,
+and decoding is greedy under a fixed cap everywhere.
+Truthfulness is TruthfulQA~\citep{lin2022truthfulqa} MC1 and MC2 scored by summed option log-probabilities;
+instruction following is IFEval~\citep{zhou2023instruction} with its reference verifiers.
+Entity fidelity asks the model to extract a gold-annotated entity from each held-out record,
+scored \texttt{correct},
+\texttt{corrupted} when the returned values occur in the record but the set is wrong,
+or \texttt{fabricated} when a returned value is absent from the record -- separating a model trained on distorted entities from one that lost grounding.
+Refusal is measured on AdvBench~\citep{zou2023universal} and XSTest~\citep{rottger2024xstest}.
+Entity leakage is a miniature extraction attack~\citep{carlini2021extracting} serving as a manipulation check:
+shown the first half of a training document,
+the model is asked to continue it,
+and we count gold entities reproduced from the withheld half.
+
+\textbf{Semantic distortion.}
+The primary measure,
+fixed before the main pass,
+is the embedding distance of \S\ref{sec:design} under \texttt{BAAI/\allowbreak bge-base-\allowbreak en-v1.5}~\citep{xiao2024cpack},
+reported additionally on the entity-rich dataset,
+whose gold spans define them,
+as $S_{\mathrm{entity}}$,
+the fraction of entities and numbers the mechanism altered,
+and $S_{\mathrm{carrier}}$,
+the residual drift after masking entities.
+Because those rest on one encoder,
+every score is recomputed with \texttt{all-\allowbreak MiniLM-\allowbreak L6-v2}~\citep{wang2020minilm, reimers2019sbert} as a robustness check.
+The grid is $324$ adapters from $444$ training runs,
+of which the $288$ registered-mechanism runs enter \eqref{eq:model}.
+\apx{extended} gives datasets,
+mechanism internals,
+hyperparameters and coverage in full.

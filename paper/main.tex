@@ -4,8 +4,13 @@
 \usepackage{times}
 \usepackage{booktabs}
 \usepackage{multirow}
+\usepackage{graphicx}
+\graphicspath{{fig/}}
 \usepackage{xcolor}
 \usepackage{hyperref}
+\usepackage{xurl}
+\usepackage[final]{microtype}
+\microtypesetup{stretch=40,shrink=40,step=1}
 \usepackage[
   backend=biber,
   style=numeric-comp,
@@ -15,49 +20,86 @@
   uniquelist=true,
 ]{biblatex}
 \addbibresource{main.bib}
+\AtBeginBibliography{\emergencystretch=3em}
+\setcounter{biburlnumpenalty}{100}
+\setcounter{biburlucpenalty}{100}
+\setcounter{biburllcpenalty}{100}
 
 \english
+
+\raggedbottom
 
 \makeatletter
 \AtBeginDocument{\def\@serieslogo{}}
 \makeatother
 
-\newcommand{\todo}[1]{\textcolor{red}{TODO: #1.}}
+\newcommand{\apx}[1]{Appendix~\ref{apx:#1}}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
 
 \begin{document}
 
-\title[Does Privacy Distort Alignment?]{Does Privacy Distort Alignment? Decomposing the Effects of Differential Privacy on LLM Hallucination and Misalignment}
+\title[Alignment Lives in the Carrier]{Alignment Lives in the Carrier: Locating the Semantic Cost of Private LLM Adaptation}
 
 \author{Dmitry Scherbakov}
-\address{Faculty of Computational Mathematics and Cybernetics, Moscow State University, Russia}
+\address[Dmitry Scherbakov]{Faculty of Computational Mathematics and Cybernetics, Moscow State University, Russia}
 
 \author{Fang Liu}
-\address{Applied and Computational Mathematics and Statistics, University of Notre Dame, USA}
+\address[Fang Liu]{Applied and Computational Mathematics and Statistics, University of Notre Dame, USA}
 
 \date{}
 
-\keywords{AI safety \and alignment \and differential privacy \and large language models \and utility}
+\keywords{AI safety \and alignment \and differential privacy \and large language models \and semantic distortion \and utility}
 
 \begin{abstract}
-  We study how differentially private (DP) mechanisms affect the utility and safety alignment of language models (LMs). We decompose privacy effects into multiple pathways: direct changes to training or generation behavior, measurable semantic distortion of task-relevant content, and downstream alignment degradation. In a controlled setting using small open-weight LMs, public alignment datasets, and lightweight fine-tuning or inference-time perturbation methods, we evaluate whether semantic distortion explains alignment failures beyond what is predicted by privacy budget alone. We compare several privacy mechanisms, including random token perturbation, semantic text sanitization, and DP-compatible fine-tuning, across tasks measuring truthfulness, hallucination, safety behavior, refusal accuracy, helpfulness, and instruction following. Our central question is when, and to what extent, semantic distortion accounts for DP-induced degradation relative to alternative mechanisms such as optimization instability, calibration shifts, or regularization effects. The study produces privacy-alignment-utility curves and a compact evaluation framework for analyzing how privacy mechanisms affect both semantic fidelity and behavioral alignment. These results aim to clarify which forms of privacy noise are most damaging to aligned LM behavior and to inform mitigation strategies for preserving alignment under stronger privacy constraints.
+  Differentially private adaptation of large language models (LLMs) degrades alignment,
+  but the cause has gone unattributed:
+  the damage may travel through the meaning of the training signal,
+  or through non-semantic side effects of the noise.
+  We separate the two.
+  We measure semantic distortion as an embedding distance,
+  a scale comparable across mechanism families that report privacy on incomparable budgets,
+  and we add a mechanism that distorts meaning while carrying no privacy guarantee at all.
+  Over a pre-registered grid of $324$ adapters spanning three model families and two instruction datasets,
+  distortion predicts degradation with a standardized coefficient of $0.65$,
+  while the private optimizer's level slope holds at $-0.02 \pm 0.04$ across a sixteenfold range of $\varepsilon$.
+  Sanitization spends its damage at a threshold,
+  leaving half of its registered budget levels behaviorally identical.
+  The sharpest result is a reversal.
+  Damaging the ordinary language that surrounds sensitive spans costs far more than damaging the spans themselves,
+  $+1.83$ against $-0.72$,
+  so a mechanism that sanitizes only the entity spans preserves the refusal behavior and factual grounding that uniform sanitization destroys.
+  Measured memorization stays at the floor of our extraction probe across every mechanism,
+  so the privacy side of the trade rests on the formal guarantees.
+  What privacy costs alignment is the semantic damage a mechanism does to the text,
+  which makes the choice of what to damage a design variable.
 \end{abstract}
 
 \maketitle
 
-\input{sec/01-introduction}
-\input{sec/02-background}
-\input{sec/03-methods}
-\input{sec/04-results}
-\input{sec/05-future}
-\input{sec/06-conclusion}
-\input{sec/07-contributions}
+\makeatletter
+\@setaddresses
+\global\let\addresses\@empty
+\makeatother
 
+\input{sec/01-introduction}
+\input{sec/02-design}
+\input{sec/03-setup}
+\input{sec/04-results}
+\input{sec/05-discussion}
 \printbibliography
 
+\input{sec/06-contributions}
+\input{sec/07-acknowledgements}
+\input{sec/08-llm-usage}
+
 \appendix
-\input{app/01-contributions}
-\input{app/02-calibration}
-\input{app/03-dpsgd}
-\input{app/04-compute}
+\input{apx/01-contributions}
+\input{apx/02-privacy}
+\input{apx/03-extra-setup}
+\input{apx/04-calibration}
+\input{apx/05-dpsgd}
+\input{apx/06-extra-results}
 
 \end{document}

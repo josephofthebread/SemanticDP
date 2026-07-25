@@ -1,0 +1,61 @@
+\section{\label{apx:dpsgd}DP-SGD implementation}
+This appendix covers the accountant validation,
+the precision and lot-size choices,
+the per-example gradient implementation,
+and the pitfalls specific to the private branch.
+
+\paragraph{Accountant validation.}
+For target $\varepsilon = 8$ at $q = 0.01$,
+$100$ steps and $\delta = 10^{-5}$,
+the calibration returns $\sigma \approx 0.50$ and the recomputed guarantee is $\varepsilon \approx 7.995$.
+At $3$ epochs and $B = 16$ over $16{,}384$ rows ($3072$ steps, $q \approx 9.77 \times 10^{-4}$) the calibration gives $\sigma \approx 0.437$ at $\varepsilon = 8$ and $\sigma \approx 0.864$ at $\varepsilon = 1$. Re-running the accounting with R\'enyi orders up to $1024$ reproduces the realized $\varepsilon$ to three decimals at both budgets,
+so the default order grid costs no utility.
+
+\paragraph{Numerical precision.}
+The lot gradient is accumulated into an fp32 buffer and cast back to bf16 only at gradient assignment.
+Performing the accumulation and the noise draw in bf16 instead rounds much of the calibrated noise away,
+and the run then reports an $\varepsilon$ it does not deliver.
+
+\paragraph{Lot size.}
+At a lot size of $16$ the private conditions are severely under-batched.
+With $\sigma = 0.437$ and $d = 3{,}211{,}264$ trainable parameters,
+the averaged noise vector has norm $\approx 49$ against a signal of at most $C = 1$:
+the update is roughly $98\%$ noise.
+Lot size is the only knob that fixes this for free.
+Analytically,
+$\sigma$ grows only about $7\%$ per doubling of $B$,
+so $B = 256$ at $3$ epochs yields $12.1\times$ the gradient signal-to-noise ratio at $1.0\times$ the cost,
+whereas $B = 256$ at $6$ epochs yields \textit{less} ($11.3\times$) at $2.0\times$ the cost.
+The measured ratio improved about $7\times$ ($0.010 \to 0.073$ at $\varepsilon = 8$).
+Raising the adapter rank instead would have been actively harmful,
+since the noise is injected per trainable parameter and more capacity therefore means more noise at the same $\varepsilon$.
+
+\paragraph{Per-example gradients by explicit loop.}
+The natural implementation vectorizes per-example gradients with \texttt{torch.func}~\citep{paszke2019pytorch},
+and the small adapter parameter count makes that look cheap.
+It is not.
+There is no batching rule for the fused FlashAttention~\citep{dao2022flashattention} backward kernel,
+so the vectorizing transform falls back to a path that materializes the full sequence\,$\times$\,sequence attention matrix per example,
+and the branch exhausted memory at $16 \times 2048$ on the grid instance.
+Neither a lower LoRA rank nor micro-batching addresses this,
+because the vectorization itself is the cost.
+The private branch therefore iterates over the lot one example at a time,
+clipping in place and accumulating.
+This is slower per step but bounded,
+and the ratio is structural rather than tunable -- one backward pass per example regardless of lot size -- costing about $2.8\times$ the wall-clock of the non-private mechanism ($97$ against $35$ minutes at $B = 16$).
+
+\paragraph{Lot size variability.}
+Under Poisson subsampling the realized lot size varies (at $B = 16$: mean $16$, sd $3.9$, observed range $7$--$30$),
+and empty lots are skipped,
+which only over-pays privacy.
+
+\paragraph{Two pitfalls specific to the private branch.}
+Rows whose prompt fills the context window have every label masked,
+so their per-example cross-entropy is NaN;
+summed into the lot gradient this contaminates every adapter parameter and yields a garbage checkpoint with only a NaN in the loss log to show for it.
+Such rows are dropped before training and counted.
+Separately,
+dropout is disabled by setting every dropout module's rate to zero rather than by placing the model in evaluation mode:
+a live dropout mask would break the per-example determinism the accounting assumes,
+while evaluation mode would additionally disable training-mode behavior elsewhere in the network.
+

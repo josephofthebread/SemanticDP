@@ -1,23 +1,23 @@
-\section{Introduction}
-Organizations,
-wishing to train their large language models (LLMs) on the sensitive data records are expected to do so under a formal privacy guarantee.
-The standard answers are private optimization techniques, which add calibrated noise to the gradient updates \citep{abadi2016deep, mironov2017renyi},
+\section{\label{sec:intro}Introduction}
+Organizations wishing to train LLMs on sensitive records are expected to do so under a formal privacy guarantee.
+The standard answers are private optimization by differentially private stochastic gradient descent (DP-SGD),
+which adds calibrated noise to the gradient updates \citep{abadi2016deep, mironov2017renyi},
 and text sanitization,
-which alters the training data itself before the model even sees it \citep{feyisetan2020privacy, yue2021differential, carvalho2021tem}.
+altering the training data before the model sees it \citep{feyisetan2020privacy, yue2021differential, carvalho2021tem}.
 Both are mature enough to deploy,
 and both are routinely evaluated the same way:
-fit the model at several privacy budgets,
+fit at a range of budgets,
 report benchmark accuracy,
-and read off the cost of privacy as the gap to a non-private baseline.
+and read the cost of privacy off the gap to a non-private baseline.
 
-What privacy costs is not only how often the model is right,
-but how it behaves.
-An adapted model can keep its benchmark accuracy and still behave worse,
-e.g. follow instructions less reliably,
-stops refusing requests it should decline and etc.
-We call this alignment degradation.
-That privacy induces it is established:
-\citet{ramesh2026privacyhallucination} fine-tune under private optimization and find factual consistency dropping as the budget tightens,
+\textbf{Accuracy is the wrong instrument.}
+What privacy costs shows up in how the model behaves,
+beyond how often it is right.
+An adapted model can keep its accuracy and still follow instructions less reliably,
+fabricate the facts it used to ground,
+or stop refusing requests it should decline;
+we call this alignment degradation.
+That private training induces it is established \citep{ramesh2026privacyhallucination},
 with the damage falling on facts learned during fine-tuning rather than on what the model already knew.
 The cause is open,
 and it decides the fix.
@@ -25,34 +25,64 @@ If noise destabilizes optimization,
 the fix is a better optimizer.
 If the damage runs through the meaning of the training text,
 then any mechanism that distorts meaning will cause it,
-private or not,
+whatever guarantee it carries,
 and the fix must protect meaning instead.
 
-We therefore measure how much each mechanism changes the meaning of the training text:
-the embedding distance between the original text and what the mechanism produced.
-That gives one scale on which private optimization and sanitization can be compared,
-even though their privacy budgets cannot be.
-We then add a mechanism with no privacy guarantee at all,
-random token replacement,
-which damages meaning without buying any privacy.
-If degradation follows distortion there too,
-then it is the damage to meaning that matters,
-not the privacy.
-We run every mechanism on two datasets that differ in how many facts their text carries:
-entity-rich and entity-poor.
+\textbf{Three lines of work place meaning at the center.}
+Differential privacy (DP) limits individual-level leakage through calibrated randomized mechanisms \citep{dwork2006calibrating, dwork2014algorithmic},
+and in LLM adaptation it reduces memorization~\citep{abadi2016deep, carlini2021extracting} while altering optimization,
+generation and the semantic fidelity of the training text;
+that literature reads the tradeoff off downstream accuracy,
+which leaves alignment degradation unmeasured.
+Evaluating a privatized release by what it costs a downstream analysis is established practice where the release is tabular~\citep{bowen2020comparative, liu2023covid};
+we carry it to a released model's behavior.
+Text sanitization and metric DP perturb sensitive content while partially preserving semantic structure \citep{chatzikokolakis2013broadening, feyisetan2020privacy, yue2021differential};
+work on hallucination and semantic uncertainty reads reliability over meanings rather than surface tokens \citep{farquhar2024detecting};
+and semantic privacy research finds leakage to be contextual and inferential \citep{ma2025sok}.
+Each locates its object at the level of meaning,
+which is where an account of what privacy costs has to look.
+The two mechanism families also sit on incomparable privacy scales,
+and they damage different things:
+sanitization acts on meaning by definition,
+while DP-SGD leaves the text intact and suppresses memorization of the rare sequences extraction attacks target \citep{carlini2021extracting},
+which is precisely where unusual facts live.
 
-\paragraph{What we find.}
+\textbf{A second axis makes the families comparable.}
+We measure what each mechanism did to the training signal:
+the embedding distance between the original text and what the mechanism produced,
+computed independently of the privacy parameter that produced it.
+It is the one regressor common to every mechanism.
+Because distortion and privacy level move together inside any single mechanism,
+we add one whose only effect is semantic damage,
+random token replacement.
+If degradation follows distortion there too,
+the damage to meaning is what matters.
+Every mechanism runs on two datasets differing in how densely their text carries facts,
+across three model families and three seeds.
+
+\textbf{What we find.}
 Distortion predicts degradation;
-the privacy budget barely does.
-Tightening the private optimiser by more than an order of magnitude leaves measured degradation where it was,
-and sanitization does its damage as a cliff rather than a gradient,
-with most of its budget range carrying no information about how the model will behave.
-The sharpest result is a reversal:
+the privacy budget adds little.
+Tightening the private optimizer by more than an order of magnitude leaves measured degradation where it was,
+and sanitization does its damage in a single step at a threshold.
+Then a reversal:
 damaging the language around the facts costs far more than damaging the facts themselves,
 so a mechanism aimed only at the sensitive spans keeps refusal and factual grounding intact where uniform sanitization destroys both.
-The privacy mechanism was aimed at the sensitive content;
-what it actually damaged was the model's ability to behave.
-The study uses three small instruction-tuned open-weight models of one to two billion parameters,
-two instruction datasets,
-low-rank adapters and three seeds per condition.
-We enumerate this paper contributions in \app{contrib}.
+Our contributions are:
+\begin{itemize}\setlength{\itemsep}{2pt}\setlength{\parskip}{0pt}
+  \item \textbf{A decomposition separating the semantic and non-semantic costs of privacy},
+  estimating one shared distortion coefficient across families whose budgets are incomparable,
+  against a negligibility floor and a dominance test fixed before the main pass (\S\ref{sec:design}).
+  Distortion carries a standardized coefficient of $0.65$ and every level slope is smaller (\S\ref{sec:pathway}).
+  \item \textbf{Evidence that the budget range is behaviorally flat}:
+  the private optimizer's level slope is $-0.02 \pm 0.04$ over a sixteenfold range of $\varepsilon$,
+  and half of the registered sanitization levels are behaviorally inert,
+  with the transition locatable from distortion alone before anything is trained (\S\ref{sec:cliff}).
+  \item \textbf{Alignment lives in the carrier language}:
+  splitting distortion gives $-0.72$ for the entities against $+1.83$ for the carrier,
+  and an entity-targeted mechanism holds refusal at $0.209$ where uniform sanitization at the same budget leaves it at $0.004$ (\S\ref{sec:carrier}),
+  with fabrication mediating about half of the pathway (\S\ref{sec:mediation}).
+  \item \textbf{Scope established by measurement}:
+  the result survives a second encoder,
+  composition of the two mechanisms and a scale check at $8$B (\S\ref{sec:scope}).
+\end{itemize}

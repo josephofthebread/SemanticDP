@@ -1,0 +1,117 @@
+\section{\label{apx:privacy}Privacy preliminaries}
+The two mechanism families of \S\ref{sec:mech} state their guarantees over different spaces,
+and that difference is what fixes the design of \S\ref{sec:design}.
+This appendix gives the definitions those guarantees use,
+states what each mechanism in the grid satisfies,
+and relates the sanitization budget to the distortion axis the paper regresses on.
+
+\begin{definition}[$(\varepsilon, \delta)$-differential privacy]
+  \label{def:dp}
+  A randomized mechanism $\mathcal{M} \colon \mathcal{D} \to \mathcal{R}$ satisfies $(\varepsilon, \delta)$-differential privacy if for every pair of neighboring datasets $D \simeq D'$ and every measurable $E \subseteq \mathcal{R}$,
+  \begin{equation*}
+    \Pr[\mathcal{M}(D) \in E] \le e^{\varepsilon} \Pr[\mathcal{M}(D') \in E] + \delta .
+  \end{equation*}
+\end{definition}
+The pure case $\delta = 0$ is due to \citet{dwork2006calibrating},
+and \citet{dwork2014algorithmic} give the standard development of the relaxation used here.
+Throughout,
+$D \simeq D'$ means the two datasets differ in one training example,
+so the guarantee is example-level over the adaptation set:
+one instruction row is the protected unit.
+
+\begin{definition}[R\'enyi differential privacy]
+  \label{def:rdp}
+  For $\alpha > 1$,
+  $\mathcal{M}$ satisfies $(\alpha, \rho)$-R\'enyi differential privacy if $\mathrm{D}_{\alpha}\!\left(\mathcal{M}(D) \,\|\, \mathcal{M}(D')\right) \le \rho$ for every $D \simeq D'$,
+  where $\mathrm{D}_{\alpha}$ is the R\'enyi divergence of order $\alpha$.
+\end{definition}
+R\'enyi differential privacy (RDP) composes additively in $\rho$ over a sequence of releases,
+and an $(\alpha, \rho)$ guarantee converts to $\left(\rho + \log(1/\delta)/(\alpha - 1),\, \delta\right)$-DP for any $\delta \in (0, 1)$~\citep{mironov2017renyi}.
+Both properties are why the accounting in this paper is carried in $\rho$ and converted once at the end.
+
+\begin{definition}[Metric differential privacy]
+  \label{def:metricdp}
+  Let $(\mathcal{X}, d)$ be a metric space of inputs.
+  A mechanism $\mathcal{M} \colon \mathcal{X} \to \mathcal{R}$ satisfies $\varepsilon d$-privacy if for every $x, x' \in \mathcal{X}$ and every measurable $E \subseteq \mathcal{R}$,
+  \begin{equation}
+    \Pr[\mathcal{M}(x) \in E] \le e^{\varepsilon d(x, x')} \Pr[\mathcal{M}(x') \in E] .
+    \label{eq:metricdp}
+  \end{equation}
+\end{definition}
+Definition~\ref{def:metricdp} generalizes Definition~\ref{def:dp} by letting the admissible likelihood ratio grow with the distance between inputs~\citep{chatzikokolakis2013broadening},
+which is what makes it applicable to text:
+two words that are far apart in an embedding space are allowed to be distinguishable,
+while nearby words are not.
+Inputs carrying a natural geometry are what motivate the definition,
+and its location instance,
+geo-indistinguishability,
+has been used to ask of a downstream prediction task the question this paper asks of text:
+how much utility the guarantee costs the released object~\citep{liu2021privacy}.
+
+\paragraph{Private optimization.}
+DP-SGD clips each per-example gradient to $L_2$ norm $C$,
+sums the clipped gradients over a lot drawn by Poisson sampling at rate $q$,
+adds $\mathcal{N}(0, \sigma^2 C^2 I)$ and averages~\citep{abadi2016deep}.
+The additive noise is the Gaussian member of a family calibrated to the $\ell_p$ sensitivity of the released quantity,
+whose scale requirement at a given $(\varepsilon, \delta)$ is characterized by \citet{liu2019ggm}.
+Each step is an instance of the sampled Gaussian mechanism,
+whose R\'enyi divergence bound $\rho_{\mathrm{SGM}}(\alpha; q, \sigma)$ is given by \citet{mironov2019sgm};
+over $T$ steps the released parameter sequence satisfies $(\alpha, T \rho_{\mathrm{SGM}}(\alpha; q, \sigma))$-RDP,
+which Definition~\ref{def:rdp} converts to the $(\varepsilon, \delta)$ pair reported in \S\ref{sec:mech} at $\delta = 10^{-5}$,
+minimizing over $\alpha$.
+Our accountant recomputes $\varepsilon$ from the realized $q$,
+$\sigma$ and $T$ of each run rather than from their nominal values;
+\apx{dpsgd} reports its validation.
+
+\paragraph{Post-processing.}
+DP is closed under post-processing:
+if $\mathcal{M}$ satisfies Definition~\ref{def:dp} then so does $f \circ \mathcal{M}$ for any $f$ independent of the data.
+The released object here is the adapter,
+so every quantity the paper computes downstream of it -- generations,
+benchmark scores,
+refusal rates,
+generation-side distortion -- carries the same guarantee,
+and the evaluation suite of \S\ref{sec:eval} consumes no budget however many probes it runs.
+
+\paragraph{Sanitization.}
+TEM applies the exponential mechanism~\citep{mcsherry2007mechanism} over a word's embedding neighborhood,
+and satisfies \eqref{eq:metricdp} for one replaced word with $d$ the Euclidean metric on the GloVe embedding space,
+the support truncated to a ball around the input and mass beyond the threshold going to a fallback symbol~\citep{carvalho2021tem};
+it sits in the line of embedding-space text mechanisms opened by \citet{feyisetan2020privacy} and \citet{yue2021differential}.
+The unit of the guarantee is a single word,
+so a document of $n$ covered tokens composes to $n \varepsilon$ in the worst case,
+and the guarantee covers the vocabulary the embedding spans.
+Tokens outside that vocabulary are released unchanged,
+which is the asymmetry \S\ref{sec:mech} uses:
+at matched nominal privacy the two data-side mechanisms damage entities by different amounts,
+and \eqref{eq:model} is identified from that gap.
+
+\paragraph{Why the two budgets do not share a scale.}
+The $\varepsilon$ of Definition~\ref{def:dp} and the $\varepsilon$ of Definition~\ref{def:metricdp} differ in three places at once.
+They quantify over different neighboring relations,
+one example against one word.
+They constrain different released objects,
+a sequence of parameter iterates against a sequence of token releases.
+And they compose over different units,
+optimizer steps against tokens in a document.
+A word-level $\varepsilon = 1$ and an example-level $\varepsilon = 1$ therefore bound the likelihood ratio of different experiments,
+and no monotone map carries one to the other.
+This is the formal content of the statement in \S\ref{sec:design} that the nominal budgets are incomparable across families:
+it is why privacy enters \eqref{eq:model} as the level rank $d_i$ within a mechanism,
+and why the cross-family comparison runs through $S$,
+which is measured in one set of units for every mechanism.
+
+\paragraph{What the distortion axis measures.}
+Metric DP writes its bound as $\varepsilon d(x, x')$,
+so the guarantee is stated in a distance,
+and a mechanism buys indistinguishability by placing mass on points at some distance from its input.
+The expected distance between an input and its release is therefore the quantity in which the sanitization guarantee is priced.
+The semantic distortion $S$ of \S\ref{sec:design} is an expectation of that form,
+taken at document granularity under a sentence encoder rather than at word granularity under the mechanism's own embedding metric,
+so the two are related in kind rather than identical as functionals.
+What the correspondence supplies is a reason to expect $S$ to track the mechanism's action closely enough to serve as the shared regressor,
+which \S\ref{sec:pathway} confirms empirically.
+For private optimization the same distance is zero on the training text by construction,
+since the text is never touched,
+which is why $S$ is measured between generations of the adapted and the base model in that case,
+and why private optimization appears in Figure~\ref{fig:pathway} as a vertical cluster at $S \approx 0$.

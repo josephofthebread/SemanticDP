@@ -1,0 +1,369 @@
+\section{\label{apx:extended}Extended design and experimental setup}
+This appendix carries the formal development and implementation detail compressed out of \S\ref{sec:design} and \S\ref{sec:setup}.
+
+\subsection{\label{apx:extdesign}Design}
+Let $\theta_0$ be a small instruction-tuned open-weight LLM.
+Each run applies a privacy mechanism $m_i$ at a given strength,
+acting on either the adaptation data or the adaptation procedure,
+and produces an adapted model.
+Each run yields two measurements.
+\textbf{Semantic distortion} $S_i$ is the mean cosine distance between sentence embeddings of the original and the rewritten training text;
+where the mechanism leaves the text intact,
+it is measured between generations of the adapted and the base model on a fixed probe set.
+$S$ is computed without reference to the privacy parameter that produced it.
+\textbf{Alignment degradation} $Y_i$ is the drop from the same model's non-private baseline on the evaluation suite of \S\ref{sec:eval}.
+
+The two candidate pathways make opposite predictions about what survives conditioning on distortion:
+if degradation runs through meaning,
+the association between privacy level and $Y$ vanishes once $S$ is held fixed;
+if it does not,
+a level effect remains at fixed $S$. Splitting the association that way and writing it linearly yields
+\begin{equation}
+  Y_i = a_{m_i} + b_{m_i} d_i + c S_i + e_i,
+  \label{eq:modelext}
+\end{equation}
+where $d_i$ is the privacy-level rank of run $i$ within its own mechanism,
+$a_m$ and $b_m$ are a per-mechanism intercept and level slope,
+respectively,
+and $e_i$ is the error term.
+A random intercept per base model is added to $a_m$.
+$Y$,
+$d$ and $S$ are z-scored,
+so $b_m$ and $c$ are standardized effects on a common scale.
+Baseline runs have $Y \equiv 0$ by definition:
+they set the zero point and are not regression rows.
+
+Despite the mechanism index on $a_m$ and $b_m$,
+\eqref{eq:model} is one regression estimated jointly over all mechanism runs through indicator variables:
+seven coefficients fitted in a single pass,
+with the per-model random intercept as a mixed-effects term.
+The pre-registered cluster-robust correction by model~$\times$~mechanism cell is recorded as a deviation in \apx{deviations}.
+Each row activates the intercept and slope of its own mechanism only.
+The $S$ column carries no indicator,
+so $c$ is shared and pools mechanisms that disagree about how much distortion a given privacy level buys.
+Joint estimation puts $\hat c$ and each $\hat b_m$ in one covariance matrix,
+so comparing them is a Wald test on linear combinations of coefficients.
+
+The privacy level enters \eqref{eq:model} only through its rank $d_i$.
+Within each mechanism the settings are ordered from strictest to loosest,
+coded $1$ upward,
+and z-scored,
+so mechanisms with different numbers of levels enter on the same scale.
+The nominal budgets are incomparable across families:
+private optimization gives example-level $(\varepsilon, \delta)$-DP~\citep{abadi2016deep},
+sanitization word-level metric local differential privacy (LDP)~\citep{chatzikokolakis2013broadening}.
+Rank coding rests on the ordering of the settings alone,
+which leaves $S$ as the one regressor common to every mechanism.
+
+We state the claim in two stages,
+because a shared coefficient can be statistically distinct from zero and still too small to matter.
+The first stage fixes a negligibility floor $\Delta = 0.10$ in standardized units,
+committed before the main pass together with the primary $S$ metric and the exclusion rules,
+and asks whether $|c| \ge \Delta$:
+distortion moves alignment by an amount worth acting on.
+The value of $\Delta$ is arbitrary and the conclusion does not turn on it;
+it marks the point below which an effect is negligible,
+so a confidence interval for $c$ contained in $(-\Delta, \Delta)$ settles the first stage the other way,
+establishing the practical absence of the semantic pathway by TOST.
+The second stage is the substantive one:
+$|c| \gg |b_m|$ for every mechanism,
+distortion predicting degradation far more strongly than the nominal privacy level,
+tested as $|c| > |b_m|$ on the joint covariance of \eqref{eq:model}.
+
+Within a single mechanism $S$ and $\varepsilon$ are correlated by construction,
+so no one mechanism separates $b_m$ from $c$. The design produces variation in $S$ at fixed privacy from two sources.
+The first is the contrast between families,
+which reach comparable privacy with different amounts of semantic damage:
+sanitization passes out-of-vocabulary tokens through untouched while random replacement destroys them,
+and personally identifiable information (PII) is typically out of vocabulary (\S\ref{sec:mech}).
+The second is a non-private control.
+If it degrades alignment as much as the private conditions at equal $S$,
+semantic damage rather than privacy is the cause;
+if it does not,
+the residual measures mechanism-specific,
+non-semantic effects.
+We report VIF for $S$,
+falling back to the within-level cross-mechanism contrast,
+which is free of $\varepsilon$ -- $S$ confounding.
+
+\subsection{\label{apx:extsetup}Experimental setup}
+Here, we describe datasets,
+privacy mechanisms,
+models and evaluation suite.
+
+\subsection{Datasets}
+The text the mechanisms perturb stands in for the sensitive data.
+The two datasets differ in \textbf{entity density},
+because privacy risk concentrates in names,
+numbers and facts,
+and the mechanisms treat these tokens differently from common words:
+rare tokens occupy sparse regions of embedding space,
+so sanitization replaces them with distant,
+fact-changing substitutes,
+and private optimization suppresses the memorization of exactly such rare sequences.
+
+\paragraph{Entity-rich.}
+\texttt{nvidia/Nemotron-PII}~\citep{nvidia2025nemotronpii} is a synthetic dataset of emails,
+clinical notes,
+forms and free text,
+with gold span-level PII annotations.
+The gold spans make the entity component of $S$ exact rather than dependent on a noisy named entity recognition model,
+and let us measure whether an adapted model reproduces or corrupts specific entities.
+We restrict to the biomedical domains for simplicity.
+The mechanisms perturb text without regard to domain,
+so one domain suffices to study them and a broader set would add cost without changing what we measure.
+We keep records with at least one parsable span.
+
+Each document is rendered once into an instruction example,
+reused by every condition,
+under one of three templates sampled per record:
+extract a labeled entity,
+draft a document of the given type and domain,
+or classify the document type.
+The training set is $16{,}384$ rows.
+A further $375$ records are held out for the entity-fidelity probe,
+disjoint \textit{by source document} rather than by rendering,
+since one document appears under several renderings and splitting on rows would leak.
+Another $375$ are sampled from the training rows for the leakage probe;
+these are not held out,
+because the probe asks whether training memorized them.
+
+\paragraph{Entity-poor.}
+A fixed subset of Alpaca~\citep{taori2023alpaca} of the same size:
+generic assistant tasks with few named entities or numbers,
+and the standard small instruction-tuning dataset,
+which keeps results comparable to prior work.
+Gold spans define the entity and carrier components of $S$,
+so those two components are reported on the entity-rich dataset,
+and the entity-poor dataset carries the composite $S$ alone.
+Dataset construction and perturbation run as a single pass emitting both datasets together,
+so the perturbed datasets are matched on both sides of the entity-density contrast.
+
+\subsection{\label{apx:mech}Privacy mechanisms}
+The registered grid has four conditions:
+a non-private baseline,
+a non-private distorting control,
+and two mechanisms carrying formal guarantees.
+
+\paragraph{No privacy (baseline).}
+Standard LoRA fine-tuning on the clean dataset,
+defining the zero point of both $Y$ and $S$.
+
+\paragraph{Random token replacement.}
+Text is tokenized on whitespace,
+numbers and identifiers included,
+and each token is independently replaced with probability $p \in \{0.05, 0.15, 0.30, 0.50\}$ by a token drawn uniformly from its own dataset vocabulary.
+A higher rate is the stricter setting,
+so the rank order is reversed relative to the $\varepsilon$-indexed mechanisms.
+It carries no privacy guarantee;
+its purpose is to vary distortion -- entity distortion in particular,
+since whitespace tokenization exposes identifiers -- independently of any privacy budget.
+
+\paragraph{Sanitization.}
+We use TEM~\citep{carvalho2021tem} rather than a plain SanText-style exponential mechanism over the full vocabulary~\citep{yue2021differential}.
+TEM restricts the candidate set to words within a distance threshold and folds the remaining mass into a truncation symbol,
+avoiding the plain mechanism's low-probability substitutions drawn from arbitrarily distant words.
+For a word $x$ with embedding $e_x$,
+the near set is $N = \{w : \lVert e_x - e_w \rVert_2 \le \gamma\}$ and the far set $F = V \setminus N$,
+with utility $u(w) = -\lVert e_x - e_w \rVert_2$ and a truncation symbol $\bot$ of utility $u(\bot) = -\gamma + \tfrac{2}{\varepsilon} \ln|F|$;
+a substitute is drawn from $N \cup \{\bot\}$ with probability proportional to $\exp(\tfrac{\varepsilon}{2} u)$,
+and if $\bot$ is drawn a word is emitted uniformly from $F$. We use word-level $\varepsilon \in \{0.5, 1, 2, 3, 4, 5, 6, 12\}$ and $\gamma = 5.0$,
+sampling per token occurrence but memoizing the per-word-type distribution across occurrences and datasets,
+which makes the mechanism tractable over a $400$k-word vocabulary.
+
+Word distances come from pre-trained GloVe 6B.300d vectors~\citep{pennington2014glove}.
+Perturbation runs once and its output is consumed by all three models;
+deriving the metric from a base model's own embedding matrix would make the sanitized dataset model-specific and entangle $S$,
+the pooled regressor on which the design rests,
+with model identity.
+GloVe is also a \textit{word}-level vocabulary,
+matching the units in which the entity component of $S$ is defined,
+where a mechanism over BPE tokens would fragment entities across sub-tokens.
+Out-of-vocabulary passthrough follows from the same choice:
+medical record numbers,
+phone numbers and email addresses are out of vocabulary in GloVe,
+so TEM leaves them intact and \textit{preserves} literal entities where random replacement destroys them at matched nominal privacy.
+That asymmetry is the identification strategy of \S\ref{sec:design},
+and subword vectors such as fastText would remove it.
+
+Both data-side mechanisms rewrite only the content fields of each instructionized example,
+leaving the instruction template intact:
+the instruction is a fixed task specification rather than sensitive data,
+and perturbing it corrupts what the model is asked to do instead of the signal the mechanism acts on.
+Perturbed rows keep the original schema and gold-span offsets,
+so entity-level distortion is computed by joining each perturbed row to its clean counterpart on the example identifier.
+
+\paragraph{Private optimization.}
+DP-SGD~\citep{abadi2016deep} is applied to the LoRA parameters at example-level $\varepsilon \in \{1, 4, 8, 16\}$ with $\delta = 10^{-5}$.
+Lots are drawn by Poisson subsampling,
+each example included independently with probability $q = B/N$.
+This is not interchangeable with shuffled fixed-size minibatches:
+the amplification result the accountant applies is proved for Poisson sampling~\citep{mironov2019sgm},
+and under shuffled batches the reported $\varepsilon$ would misstate the mechanism that was run.
+Per-example gradients are clipped to $\lVert g \rVert_2 \le C$ and accumulated in fp32,
+Gaussian noise $\mathcal{N}(0, (\sigma C)^2)$ is added to the sum,
+and the result is divided by the \textit{configured} lot size rather than the number of examples drawn,
+as Poisson sampling requires.
+The private loop is written directly against the adapter parameters,
+but privacy accounting is delegated to an established implementation:
+a numerical inversion for the $\varepsilon \mapsto \sigma$ calibration,
+and a R\'enyi accountant~\citep{mironov2017renyi} for the realized $\varepsilon$,
+recomputed at the chosen $\sigma$ over the actual step count and logged as the reported guarantee.
+An error in a training loop shows up in the loss;
+an error in a hand-vendored accountant silently under-reports $\varepsilon$.
+\apx{dpsgd} gives the implementation details,
+the end-to-end validation of the calibration,
+and the pitfalls specific to this branch.
+In the registered grid the mechanisms are kept separate:
+the private branch trains only on clean text.
+A post-hoc block lifts that restriction (\S\ref{sec:scope}).
+A post-hoc block lifts that guard to measure their interaction (\S\ref{sec:scope}).
+
+\paragraph{Entity-targeted sanitization (post-hoc control).}
+This variant was added after the main fit to separate the entity and carrier components of $S$,
+which uniform sanitization moves together (\S\ref{sec:carrier}).
+It applies TEM to the gold entity spans alone -- resampling each distinct entity once and substituting it at every occurrence -- and leaves the carrier text verbatim.
+It runs at two budgets on the entity-rich dataset only,
+since the targeting requires the gold spans.
+At matched entity displacement it inflicts a fraction of the carrier damage that uniform sanitization does,
+isolating the two components the uniform mechanism confounds.
+
+\subsection{Models and adaptation}
+We use three dense open-weight instruction-tuned models in the $1$ -- $2$B range:
+Qwen3-1.7B~\citep{yang2025qwen3},
+Llama-3.2-1B-Instruct~\citep{grattafiori2024llama},
+and Falcon3-1B-Instruct~\citep{falcon3}.
+The size is set by the grid:
+with $324$ adapters to train and evaluate,
+each must cost tens of GPU-minutes for the design to remain affordable.
+Three \textit{families} rather than three checkpoints of one family let the per-model random intercept absorb base-model idiosyncrasy;
+the claims of \S\ref{sec:design} require variation across pretraining recipes and tokenizers.
+All three expose the same query and value projections,
+keeping the adapter target set identical across conditions.
+We exclude the newest hybrid small models -- gated linear attention with sparse mixture-of-experts -- since per-example gradient computation is awkward there and an accounting error on a novel architecture would invalidate the entire private column.
+
+Every condition uses the same adaptation procedure:
+LoRA~\citep{hu2022lora} with rank $16$,
+$\alpha = 32$,
+adapters on the query and value projections,
+no dropout and no bias terms,
+the base model loaded in bf16 and frozen,
+and loss taken on completion tokens only using the same chat-template call the evaluation harness uses.
+This gives $3{,}211{,}264$ trainable parameters.
+Sequences are truncated at $2048$ tokens and training runs for $3$ epochs at a lot size of $256$,
+with a warmup--stable--decay learning-rate schedule~\citep{hu2024minicpm} specified in \textit{fractions} of total steps,
+so its shape is identical in every cell.
+The conditions differ only in which dataset they consume,
+except the private one,
+which additionally runs the private loop,
+gated on the presence of a target $\varepsilon$ rather than on a global flag.
+
+Holding the procedure fixed leaves the mechanism as the only varying factor,
+a precondition for \eqref{eq:model} to attribute differences in $Y$ to $S$ and the privacy level rather than to training hyperparameters.
+The fixed learning rate carries a cost,
+since private conditions often prefer a higher rate than clean ones and the shared value was tuned on the clean condition.
+We measured it:
+the tuned rate improves the private mechanism as well,
+at every budget tested.
+\apx{calib} reports the calibration runs,
+the seed-noise floor that terminates them,
+and two settings whose response is flat.
+
+Epochs are held at $3$ because they affect privacy:
+$\sigma$ is calibrated over the total step count,
+so more epochs mean more composition and a noisier private mechanism at the same $\varepsilon$.
+Training longer would give the non-private conditions more optimization and the private mechanism both more optimization and more noise,
+an asymmetry that would enter $\hat b_m$ and confound the effect the regression measures.
+Lot size is free of this coupling:
+the private branch performs one backward pass per \textit{example},
+so total work is independent of $B$,
+and lot size is the parameter used to raise the gradient signal-to-noise ratio (\apx{dpsgd}).
+
+\subsection{\label{apx:eval}Evaluation}
+Every component of $Y$ is judge-free:
+no LLM judge enters the measurement chain,
+so the dependent variable is independent of any judge model's own alignment properties.
+Decoding is greedy and capped at a fixed number of new tokens,
+the same cap in every condition.
+
+\paragraph{Truthfulness.}
+TruthfulQA~\citep{lin2022truthfulqa} MC1 and MC2 on the validation split.
+We score each option by the summed token log-probabilities of the option conditioned on the question prompt,
+giving a likelihood over the fixed options.
+
+\paragraph{Instruction following.}
+IFEval~\citep{zhou2023instruction},
+whose prompts carry programmatically verifiable constraints;
+we report prompt-level and instruction-level accuracy using the reference verifiers.
+
+\paragraph{Entity fidelity (hallucination).}
+The model is asked to extract a gold-annotated entity from each of the $375$ held-out records,
+with the requested label drawn deterministically per record.
+Responses are scored against the gold spans into three exclusive outcomes:
+\texttt{correct},
+\texttt{corrupted} (every returned value occurs somewhere in the record, but the set is incorrect),
+and \texttt{fabricated} (some returned value does not occur in the record at all, or nothing is returned).
+The distinction separates the two pathways:
+corruption indicates a model trained on distorted entities,
+fabrication one that lost grounding entirely.
+
+\paragraph{Refusal.}
+Refusal is measured on the $520$ harmful instructions of AdvBench~\citep{zou2023universal} and on XSTest~\citep{rottger2024xstest},
+whose $450$ prompts divide between benign requests phrased so as to look alarming and genuinely unsafe ones.
+A response counts as a refusal when one of a fixed list of refusal phrases occurs in its first $120$ characters,
+the same rule in every condition,
+which keeps the measurement judge-free.
+The two suites together separate a model that has become discriminating from one that declines whatever it is asked.
+Refusal is reported alongside $Y$ and stays outside it (\apx{refusal}).
+
+\paragraph{Entity leakage (memorization).}
+Leakage is reported alongside $Y$ and stays outside it.
+For the $375$ records that \textit{were} in the training set,
+the model is shown the first half of the document and asked to continue it verbatim;
+we count how many gold entities in the withheld second half are reproduced.
+This is an extraction attack in miniature~\citep{carlini2021extracting} and serves as a manipulation check:
+a mechanism whose leakage matches the baseline has not delivered the privacy whose alignment cost the paper measures.
+
+\subsection{Semantic distortion}
+The primary measure,
+fixed before the main pass,
+is the embedding distance of \S\ref{sec:design},
+computed with \texttt{BAAI/\allowbreak bge-base-\allowbreak en-v1.5}~\citep{xiao2024cpack} as the sentence encoder.
+$S$ is additionally reported as two components:
+$S_{\mathrm{ent}}$,
+the fraction of named entities and numbers not preserved between original and perturbed text,
+defined against gold spans,
+so reported on the entity-rich dataset;
+and $S_{\mathrm{gen}}$,
+the residual embedding drift after masking entities.
+We test whether $S_{\mathrm{ent}}$ drives truthfulness and hallucination degradation while $S_{\mathrm{gen}}$ drives instruction-following degradation,
+by refitting \eqref{eq:model} with the two components in place of $S$. Because the embedding-based components rest on a single encoder,
+every distortion score is recomputed with a second,
+unrelated encoder (\texttt{all-\allowbreak MiniLM-\allowbreak L6-v2}~\citep{wang2020minilm, reimers2019sbert}) as a robustness check;
+the primary measure was fixed in advance so that it could not be selected after the results were visible.
+The entity component is a token-membership rate rather than an embedding distance,
+so it is invariant to that choice by construction.
+
+\subsection{Experiment coverage}
+Random replacement has four rates and private optimization four budgets;
+sanitization has eight,
+whose cost in collinearity exceeded its gain in coverage (\apx{deviations}).
+Together the mechanisms give $17$ conditions per model on the entity-poor dataset:
+the non-private baseline,
+four rates of random replacement,
+eight budgets of sanitization,
+and four budgets of private optimization.
+The entity-rich dataset adds two budgets of the entity-targeted control,
+for $19$.
+Across three base models and three seeds this is $153$ and $171$ adapters respectively,
+$324$ in total,
+of which $288$ enter \eqref{eq:model}:
+the sixteen registered mechanism conditions per dataset.
+The baseline sets the zero point,
+and the entity-targeted control is a post-hoc addition analyzed separately (\S\ref{sec:carrier}).
+Counting calibration,
+the sensitivity blocks of \apx{sensitivity},
+and repeated runs,
+$444$ training runs were executed.
+The three seeds supply the within-condition variance,
+so every reported point carries an error bar.
